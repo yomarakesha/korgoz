@@ -1,0 +1,149 @@
+# Развёртывание KörGöz (без Docker)
+
+Целевая платформа: Ubuntu/Debian Linux. Все компоненты работают как обычные процессы ОС.
+
+## 1. Python 3.12
+
+```bash
+sudo apt install python3.12 python3.12-venv
+python3.12 --version
+```
+
+## 2. Пользователь и каталог
+
+```bash
+sudo useradd --system --create-home --home-dir /opt/korgoz korgoz
+sudo -u korgoz git clone <repo> /opt/korgoz/app    # или скопировать файлы
+cd /opt/korgoz/app
+```
+
+## 3. Виртуальное окружение и зависимости
+
+```bash
+sudo -u korgoz python3.12 -m venv .venv
+sudo -u korgoz .venv/bin/pip install -r requirements.txt
+```
+
+## 4. PostgreSQL
+
+```bash
+sudo apt install postgresql
+sudo systemctl enable --now postgresql
+
+sudo -u postgres psql -c "CREATE ROLE korgoz LOGIN PASSWORD 'сильный_пароль';"
+sudo -u postgres psql -c "CREATE DATABASE korgoz OWNER korgoz;"
+```
+
+Если пароль содержит спецсимволы (`@`, `:`, `/`, `%`), закодируй их в URL
+(`@` → `%40` и т.д.).
+
+## 5. Qdrant (нативный бинарник)
+
+Qdrant распространяется как один исполняемый файл. Скачай релиз для своей архитектуры
+со страницы https://github.com/qdrant/qdrant/releases (файл `qdrant-x86_64-unknown-linux-gnu.tar.gz`).
+
+```bash
+sudo mkdir -p /opt/qdrant/storage
+sudo tar -xzf qdrant-x86_64-unknown-linux-gnu.tar.gz -C /opt/qdrant
+sudo chown -R korgoz:korgoz /opt/qdrant
+```
+
+systemd unit `/etc/systemd/system/qdrant.service`:
+
+```ini
+[Unit]
+Description=Qdrant vector database
+After=network.target
+
+[Service]
+User=korgoz
+WorkingDirectory=/opt/qdrant
+Environment=QDRANT__STORAGE__STORAGE_PATH=/opt/qdrant/storage
+Environment=QDRANT__SERVICE__HOST=127.0.0.1
+ExecStart=/opt/qdrant/qdrant
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now qdrant
+curl http://127.0.0.1:6333/healthz
+```
+
+`QDRANT__SERVICE__HOST=127.0.0.1` закрывает Qdrant от сети. Если Qdrant
+нужен с другой машины, включи API key (`QDRANT__SERVICE__API_KEY`) и задай `QDRANT_API_KEY`.
+
+## 6. Конфигурация
+
+Для production секреты лучше хранить вне каталога проекта:
+
+```bash
+sudo mkdir -p /etc/korgoz
+sudo cp .env.example /etc/korgoz/korgoz.env
+sudo chown root:korgoz /etc/korgoz/korgoz.env
+sudo chmod 640 /etc/korgoz/korgoz.env
+sudo nano /etc/korgoz/korgoz.env     # DATABASE_URL, ENVIRONMENT=production, ...
+```
+
+## 7. AI-модели
+
+```bash
+cd /opt/korgoz/app
+sudo -u korgoz .venv/bin/python -m scripts.download_models
+```
+
+Модели ложатся в `models/` (~56 МБ), SHA-256 проверяется. Если на сервере нет
+интернета, скачай их на другой машине той же командой и скопируй каталог `models/`.
+
+## 7a. Миграции
+
+```bash
+cd /opt/korgoz/app
+sudo -u korgoz bash -c 'set -a; source /etc/korgoz/korgoz.env; set +a; .venv/bin/alembic upgrade head'
+```
+
+## 8. API как сервис systemd
+
+```bash
+sudo cp scripts/systemd/korgoz-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now korgoz-api
+sudo systemctl status korgoz-api
+journalctl -u korgoz-api -f          # логи
+curl http://127.0.0.1:8000/health
+```
+
+## 9. Camera worker как сервис systemd
+
+Воркер — отдельный процесс. Он подключается к камерам, держит переподключение и пишет
+статус камер в БД. API читает статус оттуда.
+
+```bash
+sudo usermod -aG video korgoz        # доступ к USB-камерам (/dev/video*)
+sudo cp scripts/systemd/korgoz-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now korgoz-worker
+journalctl -u korgoz-worker -f       # каждые 10 с: fps, кадры, переподключения
+```
+
+Добавленные через API камеры подхватываются при перезапуске воркера:
+`sudo systemctl restart korgoz-worker`.
+
+Проверка источника до добавления в систему (без БД):
+
+```bash
+sudo -u korgoz .venv/bin/python -m scripts.check_camera --source "rtsp://user:pass@ip:554/stream1"
+```
+
+## Обновление
+
+```bash
+sudo systemctl stop korgoz-api korgoz-worker
+sudo -u korgoz git pull
+sudo -u korgoz .venv/bin/pip install -r requirements.txt
+# модели (шаг 7) и миграции (шаг 7a)
+sudo systemctl start korgoz-api korgoz-worker
+```

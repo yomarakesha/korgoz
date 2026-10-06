@@ -1,0 +1,24 @@
+[Unit]
+Description=KörGöz API (FastAPI)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=korgoz
+Group=korgoz
+WorkingDirectory=/opt/korgoz/app
+# Secrets live outside the repository, readable only by root and korgoz.
+EnvironmentFile=/etc/korgoz/korgoz.env
+ExecStart=/opt/korgoz/app/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

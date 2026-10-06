@@ -1,0 +1,37 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data: never commit models, face images, embeddings, dumps
+logs/
+models/
+data/
+*.onnx
+*.sql
+*.dump
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
+*.npy
+
+# Frontend
+node_modules/
+dist/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

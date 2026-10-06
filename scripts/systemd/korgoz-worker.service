@@ -1,0 +1,27 @@
+[Unit]
+Description=KörGöz camera worker (video ingestion and vision pipeline)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=korgoz
+Group=korgoz
+# Access to /dev/video* for USB cameras.
+SupplementaryGroups=video
+WorkingDirectory=/opt/korgoz/app
+EnvironmentFile=/etc/korgoz/korgoz.env
+ExecStart=/opt/korgoz/app/.venv/bin/python -m app.worker
+# SIGTERM triggers a graceful stop: cameras are marked offline in the database.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

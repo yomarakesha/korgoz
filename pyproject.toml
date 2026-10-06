@@ -1,0 +1,45 @@
+[project]
+name = "korgoz"
+version = "0.1.0"
+description = "KörGöz — Intelligent Vision & Situational Analytics Platform"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["app/database/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # "ö" in KörGöz is intentional
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["app/database/migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["onnxruntime", "onnxruntime.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers -m 'not ai'"
+markers = [
+    "integration: needs real external services (PostgreSQL, Qdrant); skipped when unreachable",
+    "ai: loads real AI models; slow, run explicitly with `-m ai`",
+]
