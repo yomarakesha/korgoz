@@ -249,3 +249,4 @@ Docker не используется. Инструкции по установк
 | `Live view disabled: cannot bind` | Порт 8001 занят — смени `LIVE_VIEW_PORT` (одинаково для API и воркера) |
 | Низкий FPS обработки | См. «Настройка под слабое железо» в docs/ai.md |
 | `alembic: command not found` | Не активирован venv: `source .venv/bin/activate` |
+# korgoz
