@@ -11,6 +11,10 @@ KörGöz — локальная (on-premise) платформа видеоана
 - Без Docker: всё запускается в Python venv и через systemd.
 - Privacy-by-design: видео по умолчанию не сохраняется, хранятся только события.
 
+> **Продолжаешь проект?** Начни с [docs/handoff.md](docs/handoff.md): там состояние,
+> устройство кода, план оставшихся фаз и известные проблемы. Исходное ТЗ —
+> [docs/spec.md](docs/spec.md).
+
 ## Режимы работы
 
 | Режим | `VISION_MODE` | Что делает |
@@ -66,7 +70,7 @@ scripts/check_camera.py  проверка видеоисточника без Б
 scripts/download_models.py   загрузка моделей с проверкой SHA-256
 scripts/benchmark_detector.py  замер скорости детекции на этой машине
 scripts/systemd/         unit-файлы systemd (korgoz-api, korgoz-worker)
-docs/                    архитектура, развёртывание
+docs/                    handoff (передача проекта), spec (ТЗ), архитектура, AI, развёртывание
 ```
 
 ## Как запустить (пошагово)
