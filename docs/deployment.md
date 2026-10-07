@@ -40,7 +40,9 @@ sudo -u postgres psql -c "CREATE DATABASE korgoz OWNER korgoz;"
 ## 5. Qdrant (нативный бинарник)
 
 Qdrant распространяется как один исполняемый файл. Скачай релиз для своей архитектуры
-со страницы https://github.com/qdrant/qdrant/releases (файл `qdrant-x86_64-unknown-linux-gnu.tar.gz`).
+со страницы https://github.com/qdrant/qdrant/releases (файл `qdrant-x86_64-unknown-linux-gnu.tar.gz`,
+проверено на v1.19.2). SHA-256 архива сверь с полем `digest` в
+`https://api.github.com/repos/qdrant/qdrant/releases/tags/<версия>`.
 
 ```bash
 sudo mkdir -p /opt/qdrant/storage
@@ -60,6 +62,8 @@ User=korgoz
 WorkingDirectory=/opt/qdrant
 Environment=QDRANT__STORAGE__STORAGE_PATH=/opt/qdrant/storage
 Environment=QDRANT__SERVICE__HOST=127.0.0.1
+# Qdrant sends anonymous usage telemetry by default; KörGöz is local-first.
+Environment=QDRANT__TELEMETRY_DISABLED=true
 ExecStart=/opt/qdrant/qdrant
 Restart=on-failure
 
@@ -73,7 +77,8 @@ sudo systemctl enable --now qdrant
 curl http://127.0.0.1:6333/healthz
 ```
 
-`QDRANT__SERVICE__HOST=127.0.0.1` закрывает Qdrant от сети. Если Qdrant
+`QDRANT__TELEMETRY_DISABLED=true` отключает анонимную телеметрию, которую Qdrant
+по умолчанию отправляет разработчикам. `QDRANT__SERVICE__HOST=127.0.0.1` закрывает Qdrant от сети. Если Qdrant
 нужен с другой машины, включи API key (`QDRANT__SERVICE__API_KEY`) и задай `QDRANT_API_KEY`.
 
 ## 6. Конфигурация

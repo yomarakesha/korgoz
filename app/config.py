@@ -82,13 +82,25 @@ class Settings(BaseSettings):
     face_detector_model_path: Path = Path("models/face_detection_yunet_2023mar.onnx")
     face_detection_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
+    # --- Tracking (ByteTrack) ---------------------------------------------
+    # PERSON_CONFIDENCE_THRESHOLD is the "high" score; boxes between
+    # TRACK_LOW_THRESHOLD and it only extend existing tracks.
+    tracking_enabled: bool = True
+    track_low_threshold: float = Field(default=0.1, ge=0.0, le=1.0)
+    track_new_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    track_match_iou: float = Field(default=0.2, gt=0.0, le=1.0)
+    track_max_lost_seconds: float = Field(default=3.0, gt=0.0)
+    track_flush_interval_seconds: float = Field(default=5.0, gt=0.0)
+
+    # --- Recognition / events --------------------------------------------
+    face_match_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+    event_cooldown_seconds: float = Field(default=30.0, ge=0.0)
+
     # --- Live view (served by the worker, proxied by the API) ------------
     live_view_enabled: bool = True
     live_view_host: str = "127.0.0.1"
     live_view_port: int = Field(default=8001, ge=1, le=65535)
     live_view_jpeg_quality: int = Field(default=80, ge=10, le=100)
-    face_match_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
-    event_cooldown_seconds: float = Field(default=30.0, ge=0.0)
 
     @field_validator("log_level", mode="before")
     @classmethod

@@ -28,9 +28,11 @@ from app.config import Settings, get_settings
 from app.core.logging import setup_logging
 from app.database.models import Camera
 from app.database.session import get_engine
-from app.pipeline.factory import AIComponents, build_ai_components
+from app.pipeline.factory import AIComponents, build_ai_components, build_tracker
 from app.pipeline.live_view import LiveViewHub, LiveViewServer
 from app.pipeline.processor import FrameProcessor
+from app.pipeline.types import AnalysisSink
+from app.tracking.store import TrackStore
 
 logger = logging.getLogger("app.worker")
 
@@ -82,6 +84,14 @@ class WorkerRuntime:
         self.recorder = DatabaseStatusRecorder(get_engine())
         self.manager = CameraManager(options=worker_options(settings), on_status=self.recorder)
         self.hub = LiveViewHub(settings.live_view_jpeg_quality)
+        self.track_store: TrackStore | None = None
+        sinks: list[AnalysisSink] = []
+        if settings.tracking_enabled:
+            self.track_store = TrackStore(get_engine(), settings.track_flush_interval_seconds)
+            sinks.append(self.track_store)
+        if settings.live_view_enabled:
+            sinks.append(self.hub)
+
         self.processors: dict[int, FrameProcessor] = {}
         for config in configs:
             capture = self.manager.add(config)
@@ -91,7 +101,9 @@ class WorkerRuntime:
                 detector=ai.person_detector,
                 face_detector=ai.face_detector,
                 detection_interval=settings.detection_interval,
-                sinks=[self.hub] if settings.live_view_enabled else [],
+                sinks=sinks,
+                tracker=build_tracker(settings),
+                min_person_confidence=settings.person_confidence_threshold,
             )
         self.server: LiveViewServer | None = None
         if settings.live_view_enabled:
@@ -117,6 +129,7 @@ class WorkerRuntime:
                 "capture_fps": round(worker.stats.measured_fps, 1),
                 "processing_fps": round(processor.stats.processing_fps, 1),
                 "detection_ms": round(processor.stats.avg_detection_ms, 1),
+                "active_tracks": processor.active_tracks,
                 "resolution": (
                     f"{latest.image.shape[1]}x{latest.image.shape[0]}" if latest else None
                 ),
@@ -128,6 +141,8 @@ class WorkerRuntime:
         }
 
     def start(self) -> None:
+        if self.track_store is not None:
+            self.track_store.start(list(self.processors))
         if self.server is not None:
             self.server.start()
         for processor in self.processors.values():
@@ -138,8 +153,12 @@ class WorkerRuntime:
         for processor in self.processors.values():
             processor.request_stop()
         self.manager.stop_all()
-        for processor in self.processors.values():
+        for camera_id, processor in self.processors.items():
             processor.stop()
+            if self.track_store is not None:
+                self.track_store.end_tracks(camera_id, processor.close_tracks())
+        if self.track_store is not None:
+            self.track_store.stop()
         if self.server is not None:
             self.server.stop()
         # Threads report OFFLINE when they exit; make sure the DB agrees even if one hung.
@@ -151,13 +170,14 @@ class WorkerRuntime:
             processor = self.processors[int(camera_id)]
             logger.info(
                 "Camera %s: status=%s capture_fps=%.1f processing_fps=%.1f "
-                "detection=%.0fms detections=%d size=%s",
+                "detection=%.0fms detections=%d tracks=%d size=%s",
                 camera_id,
                 info["status"],
                 info["capture_fps"],
                 info["processing_fps"],
                 info["detection_ms"],
                 processor.stats.detections_run,
+                info["active_tracks"],
                 info["resolution"] or "-",
             )
 
