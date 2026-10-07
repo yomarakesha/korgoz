@@ -244,6 +244,13 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 
 ## 6. Окружение и подводные камни
 
+- **Windows.** Есть `scripts\windows\*.bat` (подробности в README, раздел «Windows»).
+  - Ставят portable PostgreSQL и Qdrant в `.local\`, запускают API и воркер.
+  - На реальной Windows **ещё не проверялись**. Первым делом прогони
+    `setup.bat` → `start.bat -Camera demo` → `test.bat -All`.
+  - Под Windows вебка открывается через `CAP_DSHOW` (`app/camera/stream.py`, `usb_backend()`).
+  - Версии PostgreSQL и Qdrant закреплены в `scripts/windows/common.ps1`.
+
 - **Нет роли PostgreSQL** → `role "<user>" does not exist`. Создать её — README, шаг 1.
   Для тестов без sudo можно поднять временный кластер:
   `initdb` + `pg_ctl` из `/usr/lib/postgresql/<ver>/bin`, только TCP.

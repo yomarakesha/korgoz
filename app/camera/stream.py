@@ -6,6 +6,7 @@ can implement the same interface.
 """
 
 import logging
+import sys
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -40,6 +41,18 @@ class FrameSource(Protocol):
     def nominal_fps(self) -> float | None:
         """Playback rate for files (used for real-time pacing); None for live sources."""
         ...
+
+
+def usb_backend(platform: str = sys.platform) -> int:
+    """OpenCV capture backend for local (USB) cameras on this OS."""
+    if platform.startswith("linux"):
+        return int(cv2.CAP_V4L2)
+    if platform == "win32":
+        # DirectShow opens much faster than the default Media Foundation backend.
+        return int(cv2.CAP_DSHOW)
+    if platform == "darwin":
+        return int(cv2.CAP_AVFOUNDATION)
+    return int(cv2.CAP_ANY)
 
 
 def detect_source_kind(source: str) -> SourceKind:
@@ -78,7 +91,7 @@ class VideoStream:
     def open(self) -> None:
         self.release()
         if self._kind is SourceKind.USB:
-            capture = cv2.VideoCapture(int(self._source), cv2.CAP_V4L2)
+            capture = cv2.VideoCapture(int(self._source), usb_backend())
         else:
             # Without explicit timeouts a dead RTSP camera can block read() for ~30 s.
             params = [

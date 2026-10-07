@@ -14,6 +14,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Local runtime installed by scripts/windows (PostgreSQL, Qdrant, downloads, pids)
+.local/
+
 # Runtime data: never commit models, face images, embeddings, dumps
 logs/
 models/

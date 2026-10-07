@@ -70,10 +70,49 @@ scripts/check_camera.py  проверка видеоисточника без Б
 scripts/download_models.py   загрузка моделей с проверкой SHA-256
 scripts/benchmark_detector.py  замер скорости детекции на этой машине
 scripts/systemd/         unit-файлы systemd (korgoz-api, korgoz-worker)
+scripts/windows/         setup/start/stop/test для Windows (.bat + PowerShell)
 docs/                    handoff (передача проекта), spec (ТЗ), архитектура, AI, развёртывание
 ```
 
-## Как запустить (пошагово)
+## Windows: запуск в 2 клика
+
+В `scripts\windows\` лежат скрипты, которые сами всё скачивают и запускают. Права
+администратора не нужны: всё ставится в папку проекта (`.venv`, `.local`), системные
+службы не создаются.
+
+| Файл | Что делает |
+|---|---|
+| `setup.bat` | **Один раз.** Python 3.12 (через winget или python.org, если его нет), пакеты, portable PostgreSQL 18 (~340 МБ, свой порт 55432), Qdrant, AI-модели, тестовое видео, таблицы в БД. Пароль БД генерируется случайно и записывается в `.env`. Если повторить запуск, готовые шаги пропускаются, а оборванные загрузки докачиваются |
+| `start.bat` | Запускает PostgreSQL, Qdrant, API и воркер (API и воркер в отдельных окнах с логами), добавляет камеру и открывает live view в браузере |
+| `stop.bat` | Останавливает всё |
+| `test.bat` | Тесты. `test.bat -All` дополнительно запускает тесты моделей, integration-тесты на PostgreSQL, ruff, black и mypy |
+
+```bat
+cd korgoz
+scripts\windows\setup.bat
+scripts\windows\start.bat                         :: вебка ноутбука
+scripts\windows\start.bat -Camera demo            :: тестовое видео, камера не нужна
+scripts\windows\start.bat -Camera "rtsp://user:pass@192.168.1.10:554/stream1"
+scripts\windows\start.bat -Camera "C:\videos\hall.mp4"
+scripts\windows\start.bat -Mode recognition       :: режим распознавания (после Phase 5)
+scripts\windows\stop.bat
+```
+
+- **Нет доступа к GitHub или PyPI** (ошибки `Failed to connect ... 443`): включи VPN или
+  передай прокси, например `scripts\windows\setup.bat -Proxy http://127.0.0.1:10809`.
+- **Своя PostgreSQL вместо portable:** `setup.bat -SkipPostgres`, затем впиши
+  `DATABASE_URL` в `.env` вручную.
+- **Вебка:** на Windows открывается через DirectShow (`0` — первая камера). Закрой
+  Zoom, Teams и браузер с видеозвонком: они держат камеру.
+- `stop.bat` завершает воркер принудительно. Незакрытые треки закроются при следующем
+  запуске. Для аккуратной остановки сначала нажми Ctrl+C в окне воркера.
+- Требования: Windows 10 1803+ или Windows 11 (нужны встроенные `curl.exe` и `tar.exe`),
+  ~2 ГБ свободного места.
+
+Скрипты написаны и проверены статически. Пока они **не прогонялись на реальной
+Windows-машине**: при первой ошибке смотри текст в окне и сообщай о ней.
+
+## Как запустить (пошагово, Linux)
 
 Проверено на Ubuntu 26.04, Python 3.12, PostgreSQL 18. Docker не нужен.
 

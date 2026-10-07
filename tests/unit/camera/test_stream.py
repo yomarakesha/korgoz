@@ -4,7 +4,13 @@ import cv2
 import numpy as np
 import pytest
 
-from app.camera.stream import CameraConnectionError, EndOfStream, VideoStream, detect_source_kind
+from app.camera.stream import (
+    CameraConnectionError,
+    EndOfStream,
+    VideoStream,
+    detect_source_kind,
+    usb_backend,
+)
 from app.camera.types import SourceKind
 
 
@@ -17,6 +23,8 @@ from app.camera.types import SourceKind
         ("http://cam.local/mjpeg", SourceKind.NETWORK),
         ("data/videos/demo.mp4", SourceKind.FILE),
         ("/abs/path/video.avi", SourceKind.FILE),
+        (r"C:\videos\demo.mp4", SourceKind.FILE),  # Windows drive letter is not a URL scheme
+        (r"data\samples\vtest.avi", SourceKind.FILE),
     ],
 )
 def test_detect_source_kind(source: str, kind: SourceKind) -> None:
@@ -73,3 +81,16 @@ def test_error_message_hides_credentials() -> None:
 
 def test_read_before_open_returns_none() -> None:
     assert VideoStream("0").read() is None
+
+
+@pytest.mark.parametrize(
+    ("platform", "backend"),
+    [
+        ("linux", cv2.CAP_V4L2),
+        ("win32", cv2.CAP_DSHOW),
+        ("darwin", cv2.CAP_AVFOUNDATION),
+        ("freebsd14", cv2.CAP_ANY),
+    ],
+)
+def test_usb_backend_per_platform(platform: str, backend: int) -> None:
+    assert usb_backend(platform) == backend
