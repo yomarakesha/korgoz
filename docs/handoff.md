@@ -7,7 +7,7 @@
 3. [README.md](../README.md) — как запустить (пошагово, с вебкой или видеофайлом).
 4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md) — детали.
 
-Состояние на момент передачи: **фазы 1–4 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **фазы 1–5 из 10 готовы**, всё протестировано и запушено.
 
 ---
 
@@ -19,18 +19,20 @@
 | 2 Camera | USB/RTSP/HTTP/файл, поток на камеру, переподключение 1→30 с, статус в БД, CRUD `/cameras` | `python -m scripts.check_camera --source 0` |
 | 3 Detection | YOLOX (люди), YuNet (лица, только в recognition), live view MJPEG через API | `:8000/cameras/1/stream` |
 | 4 Tracking | Свой ByteTrack + Kalman, треки в БД, `GET /tracks` | `:8000/tracks?active=true` |
+| 5 Recognition | Quality check, SFace, Qdrant, `POST/GET/DELETE /persons`, подписи «Имя 0.78» в live view | README, шаг 4а |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
 - YOLOX-tiny — 21–40 мс;
 - YuNet — 13 мс;
+- SFace + поиск в Qdrant — ~9 мс на лицо (и только для новых треков);
 - трекер — 0.6 мс на обновление;
 - камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
 
 Проверки качества:
-- `pytest` — 109 passed;
-- `pytest -m ai` — 3 passed;
-- `pytest -m integration` — 2 passed;
+- `pytest` — 157 passed;
+- `pytest -m ai` — 6 passed;
+- `pytest -m integration` — Qdrant 3 passed (PostgreSQL-тесты — при `TEST_DATABASE_URL`);
 - ruff, black, `mypy --strict` — чисто.
 
 ---
@@ -41,14 +43,16 @@
 
 ```
 korgoz-api (uvicorn app.main:app)          korgoz-worker (python -m app.worker)
-  REST API, читает БД                        камеры → детекция → трекинг
+  REST API, регистрация лиц                  камеры → детекция → трекинг → распознавание
   проксирует live view  ── HTTP 127.0.0.1:8001 ──→  LiveViewServer (/status, MJPEG)
          │                                          │
-         └──────────── PostgreSQL ←──────────────────┘ (статусы камер, треки)
+         ├──────────── PostgreSQL ←──────────────────┤ (статусы камер, треки, люди)
+         └──────────── Qdrant ←──────────────────────┘ (векторы лиц)
 ```
 
-- Процессы общаются **только через БД** и внутренний HTTP воркера (`LIVE_VIEW_PORT`).
-- API ничего не знает о моделях. Состояние AI он узнаёт через `GET :8001/status`.
+- Процессы общаются **только через БД, Qdrant** и внутренний HTTP воркера (`LIVE_VIEW_PORT`).
+- API загружает модели лиц (YuNet + SFace) лениво, только при первом `POST /persons`.
+  Состояние AI воркера он узнаёт через `GET :8001/status`.
 - Воркер читает список камер **только при старте** (известное ограничение, см. §5).
 
 ### Pipeline воркера
@@ -60,8 +64,8 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
                                                    FrameAnalysis
                                                           │ sinks (список AnalysisSink)
                                      ┌────────────────────┼─────────────────────┐
-                                TrackStore          LiveViewHub         [сюда: EventEngine,
-                              (БД, свой поток)    (MJPEG, лениво)        RecognitionService]
+                                TrackStore      RecognitionSink        LiveViewHub      [сюда: EventEngine]
+                              (БД, свой поток)  (лица → люди)      (MJPEG, лениво)
 ```
 
 **Главная точка расширения — `AnalysisSink`** (`app/pipeline/types.py`). Это функция,
@@ -83,6 +87,8 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 |---|---|---|
 | `Detector` | `YoloxPersonDetector` | `app/pipeline/factory.py` |
 | `FaceDetector` | `YuNetFaceDetector` | `factory.py` (только в recognition) |
+| `FaceEmbeddingProvider` | `SFaceProvider` | `factory.build_recognition_service()` |
+| `VectorStore` | `QdrantVectorStore` | `factory.build_vector_store()` |
 | `Tracker` | `ByteTracker` | `factory.build_tracker()` — один на камеру |
 | `FrameSource` | `VideoStream` (OpenCV) | `CameraWorker` |
 
@@ -101,7 +107,7 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - Тесты:
   - unit — SQLite in-memory и фейки (`tests/unit/*/fakes.py`), без железа;
   - маркер `ai` — реальные модели;
-  - маркер `integration` — реальный PostgreSQL.
+  - маркер `integration` — реальные PostgreSQL и Qdrant.
 - Перед коммитом: `ruff check . && black --check . && mypy app tests scripts && pytest`.
 - Язык: код, комментарии и коммиты на английском, документация на русском.
 
@@ -115,7 +121,8 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | Поле `Event.metadata` | Атрибут `metadata_`, колонка `metadata` | `metadata` зарезервировано в SQLAlchemy |
 | `Event.location_id` обязателен | Nullable | Камера может быть без локации |
 | ByteTrack (библиотека) | Своя реализация, жадное сопоставление | Без лишних зависимостей, работает офлайн; при десятках людей разница незначима |
-| InsightFace/ArcFace | YuNet + (план) SFace из OpenCV Zoo | Модели InsightFace только для некоммерческого использования. SFace — Apache-2.0 |
+| InsightFace/ArcFace | YuNet + SFace из OpenCV Zoo | Модели InsightFace только для некоммерческого использования. SFace — Apache-2.0 |
+| Recognition: YuNet на вырезке трека (план в handoff) | Лица из детекции на всём кадре, привязка к треку по центру лица | Детекция лиц по кадру уже есть; второй прогон YuNet не нужен |
 | YOLO (Ultralytics) | YOLOX | Ultralytics под AGPL-3.0 |
 | Модель `Device` в БД | Не создана | Нет в списке моделей §9 ТЗ; добавить вместе с ontology в Phase 6 |
 
@@ -123,56 +130,20 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 
 ## 4. Что дальше — план по фазам
 
-### Phase 5 — Recognition (следующая)
+### Phase 5 — Recognition ✅ (готово)
 
-Готово к старту: Qdrant v1.19.2 протестирован (установка — README, шаг 2), YuNet
-подключён, режим `VISION_MODE=recognition` загружает детектор лиц.
+Сделано по плану; детали — [ai.md](ai.md) «Распознавание лиц» и
+[architecture.md](architecture.md) «Recognition». Что важно знать для Phase 6:
 
-1. **Модель эмбеддингов SFace** (OpenCV Zoo, Apache-2.0):
-   - файл `face_recognition_sface_2021dec.onnx`, ~37 МБ;
-   - URL: `https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx`.
-   - Добавь его в `scripts/download_models.py` с SHA-256. Сумму сначала посчитай
-     на скачанном файле: у автора не хватило скорости сети.
-   - В OpenCV есть готовый класс `cv2.FaceRecognizerSF.create(path, "")`. Метод
-     `alignCrop(image, face_row)` выравнивает лицо по 5 точкам YuNet, `feature()` даёт
-     вектор 128-d. Размерность бери из выхода модели, не хардкодь.
-   - Для cosine similarity OpenCV рекомендует порог **0.363**. Текущий дефолт
-     `FACE_MATCH_THRESHOLD=0.45` строже. Откалибруй на реальных фото и обнови дефолт.
-2. **`app/vector_store/`:**
-   - `base.py` — `VectorStore` ABC с методами `create_collection`, `add_embedding`,
-     `search`, `delete_embedding`, `health_check`;
-   - `qdrant_store.py` — реализация на `qdrant-client`. Добавь его в `requirements.txt`.
-     Метрика cosine. В payload храни только `person_id` и `model_name`.
-   - Перенеси `check_qdrant` из `app/core/health.py` на `VectorStore.health_check()`.
-3. **`app/recognition/`:**
-   - `quality.py` — `FaceQualityChecker`: размер лица в пикселях, резкость (дисперсия
-     Лапласиана), поворот головы по 5 точкам. Все пороги — в конфиг.
-   - `embedding.py` — `FaceEmbeddingProvider` ABC плюс `SFaceProvider`.
-   - `service.py` — `FaceRecognitionService.identify(image, face)` возвращает
-     `Match(person_id, score)` или `Unknown`. Без forced matching: если ниже порога,
-     то `UNKNOWN`.
-4. **Регистрация `POST /persons`** (multipart: name, external_id, photo).
-   - Ошибки 422: нет лица; несколько лиц; лицо меньше `FACE_MIN_SIZE`; низкое качество.
-   - Порядок записи: сначала вектор в Qdrant, затем строки `Person` и `FaceEmbedding`
-     (`vector_id` = UUID точки). Если БД упала, удали точку из Qdrant.
-   - Фото **не сохранять** на диск.
-   - Также нужны `GET /persons`, `GET /persons/{id}`, `DELETE /persons/{id}` (удаляет
-     и векторы в Qdrant).
-5. **Распознавание в воркере** — новый sink `RecognitionSink`:
-   - распознавай **по трекам, а не по кадрам**: для нового трека пробуй, пока не
-     узнал, но не чаще раза в N секунд на трек;
-   - лицо ищи внутри рамки трека (YuNet на вырезке);
-   - результат держи в словаре `track_id → (person_id | UNKNOWN, score)`;
-   - в live view подпись «Имя 0.87» вместо `Track #N` (`app/pipeline/annotate.py`).
-   - Проблема: API регистрирует новых людей, а воркер про них не знает. Решение
-     простое — воркер на каждый запрос ходит в Qdrant, он и есть общий источник правды.
-6. Тесты:
-   - порог (ниже порога → UNKNOWN);
-   - каждая ошибка регистрации;
-   - Qdrant как integration-тест с маркером `integration`;
-   - SFace как AI-тест на `data/samples/lena.jpg`: один и тот же человек → высокий score.
+- `RecognitionSink.identities(camera_id)` отдаёт `track_id → TrackIdentity`
+  (`Match(person_id, score)` или `Unknown`). EventEngine может читать его или получать
+  результаты через колбэк — добавь параметр `on_result` в `RecognitionSink`.
+- Узнанный трек больше не пробуется, `Unknown` — повторяется раз в
+  `RECOGNITION_INTERVAL_SECONDS`. Для `PERSON_UNKNOWN` разумно ждать несколько неудачных
+  попыток, а не первую.
+- Порог 0.40 откалиброван на студийных портретах. Проверь на реальной камере объекта.
 
-### Phase 6 — Events, sessions, timeline, ontology
+### Phase 6 — Events, sessions, timeline, ontology (следующая)
 
 - `app/events/engine.py` — `EventEngine` как `AnalysisSink` плюс `StatusListener`
   для камер. Источники событий:
@@ -240,6 +211,9 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | Время детекции YOLOX-tiny скачет (21–40 мс) | ноутбучный CPU | Длинный бенчмарк от сети (Phase 10) |
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
 | Нет `docs/api.md`, `docs/security.md` | — | Phase 6 и 9 |
+| Подписи в live view рисуются `cv2.putText`: кириллица в имени выводится как `???` | `pipeline/annotate.py` | Рисовать текст через Pillow с TTF-шрифтом или показывать имя в дашборде (Phase 8) |
+| Распознавание выполняется в потоке камеры (~9 мс на лицо) | `recognition/sink.py` | При многих людях одновременно вынести в отдельный поток с очередью |
+| Один вектор на человека (одно фото при регистрации) | `POST /persons` | Эндпоинт `POST /persons/{id}/photos` — несколько ракурсов повышают точность |
 | Лицензия весов YOLOX (обучены на COCO) | `docs/ai.md` | Подтвердить у юриста перед коммерцией |
 
 ## 6. Окружение и подводные камни
@@ -264,5 +238,6 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
   (прописано в README и deployment.md).
 - **FFmpeg печатает URL камер в stderr** в обход маскирующего логгера. Это заглушено в
   `app/camera/__init__.py` (`OPENCV_FFMPEG_LOGLEVEL=-8`). Не убирай эту строку.
-- **Тестовые медиа** (`data/samples/vtest.avi`, `lena.jpg`) лежат в `.gitignore`.
+- **Тестовые медиа** (`data/samples/vtest.avi`, `lena.jpg`, портреты для распознавания)
+  лежат в `.gitignore`.
   Скачиваются командой `python -m scripts.download_models --samples`.

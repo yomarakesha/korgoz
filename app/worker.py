@@ -26,12 +26,13 @@ from app.camera.types import CameraConfig, CameraStatus
 from app.camera.worker import WorkerOptions
 from app.config import Settings, get_settings
 from app.core.logging import setup_logging
-from app.database.models import Camera
+from app.database.models import Camera, Person
 from app.database.session import get_engine
 from app.pipeline.factory import AIComponents, build_ai_components, build_tracker
 from app.pipeline.live_view import LiveViewHub, LiveViewServer
 from app.pipeline.processor import FrameProcessor
 from app.pipeline.types import AnalysisSink
+from app.recognition.sink import RecognitionSink
 from app.tracking.store import TrackStore
 
 logger = logging.getLogger("app.worker")
@@ -65,6 +66,27 @@ def load_camera_configs(settings: Settings) -> list[CameraConfig]:
     return list(configs.values())
 
 
+class PersonNames:
+    """person_id -> name from the database, cached (names are only shown in live view)."""
+
+    def __init__(self) -> None:
+        self._cache: dict[int, str] = {}
+
+    def __call__(self, person_id: int) -> str | None:
+        if person_id in self._cache:
+            return self._cache[person_id]
+        try:
+            with Session(get_engine()) as session:
+                person = session.get(Person, person_id)
+        except Exception as exc:
+            logger.warning("Cannot load person name: %s", type(exc).__name__)
+            return None
+        if person is None:
+            return None
+        self._cache[person_id] = person.name
+        return person.name
+
+
 def worker_options(settings: Settings) -> WorkerOptions:
     return WorkerOptions(
         reconnect_initial_delay_seconds=settings.camera_reconnect_initial_delay_seconds,
@@ -83,12 +105,26 @@ class WorkerRuntime:
         self.ai = ai
         self.recorder = DatabaseStatusRecorder(get_engine())
         self.manager = CameraManager(options=worker_options(settings), on_status=self.recorder)
-        self.hub = LiveViewHub(settings.live_view_jpeg_quality)
         self.track_store: TrackStore | None = None
+        self.recognition: RecognitionSink | None = None
         sinks: list[AnalysisSink] = []
         if settings.tracking_enabled:
             self.track_store = TrackStore(get_engine(), settings.track_flush_interval_seconds)
             sinks.append(self.track_store)
+            if ai.recognition is not None:
+                # Recognition is per track, so it needs tracking.
+                self.recognition = RecognitionSink(
+                    ai.recognition,
+                    interval_seconds=settings.recognition_interval_seconds,
+                    resolve_name=PersonNames(),
+                )
+                sinks.append(self.recognition)
+        elif ai.recognition is not None:
+            logger.warning("Recognition needs TRACKING_ENABLED=true; faces will not be identified")
+        self.hub = LiveViewHub(
+            settings.live_view_jpeg_quality,
+            labels=self.recognition.labels if self.recognition else None,
+        )
         if settings.live_view_enabled:
             sinks.append(self.hub)
 

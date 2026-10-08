@@ -12,3 +12,6 @@ opencv-python-headless==5.0.0.93
 numpy==2.5.3
 # Phase 3: person detection (YOLOX ONNX on CPU)
 onnxruntime==1.30.0
+# Phase 5: recognition (Qdrant client; multipart uploads for POST /persons)
+qdrant-client==1.19.1
+python-multipart==0.0.32

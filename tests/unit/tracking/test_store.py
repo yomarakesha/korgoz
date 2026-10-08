@@ -1,8 +1,12 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import pytest
 from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
+from app.database.base import Base
 from app.database.models import Camera
 from app.database.models import Track as TrackRow
 from app.detection.base import BoundingBox
@@ -14,6 +18,19 @@ from ..camera.helpers import wait_until
 from ..pipeline.fakes import make_frame
 
 T0 = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def sqlite_engine(tmp_path: Path) -> Iterator[Engine]:
+    """File-backed SQLite: the store thread and the test get separate connections.
+
+    The shared in-memory engine (one connection for all threads) let a read in the
+    test roll back the store thread's open transaction, which made tests flaky.
+    """
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'tracks.db'}")
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
 
 
 def tracked(track_id: int, seen: datetime) -> TrackedObject:

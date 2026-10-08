@@ -103,6 +103,29 @@ FrameProcessor ── кадр с детекцией ──→ ByteTracker.updat
 - Трек — это непрерывное присутствие в кадре одной камеры. Межкамерная связка
   (один человек на разных камерах) появится через recognition (Phase 5) и ontology (Phase 6).
 
+## Recognition (Phase 5)
+
+```
+FrameAnalysis (tracks + faces, fresh) ──→ RecognitionSink ── assign_faces: лицо → трек
+                                               │
+                         FaceRecognitionService.identify(image, face)
+                           quality → SFace → VectorStore.search → порог
+                                               │
+                    track_id → Match(person_id, score) / Unknown
+                                               └─→ LiveViewHub (подпись «Имя 0.78»)
+
+API: POST /persons → registration_embedding(photo) → Qdrant (вектор) + PG (Person, FaceEmbedding)
+```
+
+- Воркер и API не общаются напрямую: общий источник правды — Qdrant (векторы) и
+  PostgreSQL (имена). Новые люди видны воркеру сразу.
+- В Qdrant хранятся только вектор и payload `person_id`, `model_name`. Имена, фото
+  и кадры туда не попадают. Фото регистрации не пишется на диск.
+- Имена для подписей воркер читает из БД (`PersonNames`, кэш в памяти).
+- Ошибки Qdrant оборачиваются в `VectorStoreError` (в тексте только тип исключения).
+  В воркере сбой Qdrant не ломает видео: трек просто останется без подписи и будет
+  повторён позже.
+
 ## Модель данных (Vision Ontology, хранимая часть)
 
 ```
@@ -135,7 +158,8 @@ Person 1──* Event
   - `Person` удалён → `face_embeddings` удаляются каскадно, `events.person_id` → NULL
     (анонимная статистика сохраняется).
   - `Camera` удалена → её треки, сессии и события удаляются.
-  - Векторы в Qdrant удаляет сервис регистрации (Phase 5).
+  - Векторы в Qdrant удаляет `DELETE /persons/{id}` — **до** удаления из БД. Если
+    Qdrant недоступен, ответ 503, человек остаётся, удаление можно повторить.
 - **`Event.location_id` nullable.** Камера может быть ещё не привязана к локации.
 - **`Track.track_identifier` не уникален.** Трекеры (ByteTrack) нумеруют заново после
   перезапуска. Уникален только `tracks.id`.

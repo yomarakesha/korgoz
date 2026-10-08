@@ -21,11 +21,14 @@ def _box(image: Image, bbox: BoundingBox, label: str, color: tuple[int, int, int
     cv2.putText(image, label, (x1 + 2, top + text_h + 1), _FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA)
 
 
-def annotate(analysis: FrameAnalysis) -> Image:
+def annotate(analysis: FrameAnalysis, labels: dict[int, str] | None = None) -> Image:
+    """`labels`: track_id -> text from recognition ("Name 0.87"); default "Track #N"."""
     image = analysis.frame.image.copy()
+    labels = labels or {}
     if analysis.tracks:
         for track in analysis.tracks:
-            _box(image, track.bbox, f"Track #{track.track_id}", PERSON_COLOR)
+            label = labels.get(track.track_id, f"Track #{track.track_id}")
+            _box(image, track.bbox, label, PERSON_COLOR)
     else:
         for person in analysis.persons:
             _box(image, person.bbox, f"Person {person.confidence:.2f}", PERSON_COLOR)

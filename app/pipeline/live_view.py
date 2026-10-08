@@ -28,8 +28,12 @@ BOUNDARY = "korgozframe"
 _ROUTE = re.compile(r"^/cameras/(\d+)/(snapshot\.jpg|stream\.mjpg)$")
 
 
+TrackLabels = Callable[[int], dict[int, str]]  # camera_id -> {track_id: label}
+
+
 class LiveViewHub:
-    def __init__(self, jpeg_quality: int = 80) -> None:
+    def __init__(self, jpeg_quality: int = 80, labels: TrackLabels | None = None) -> None:
+        self._labels = labels
         self._condition = threading.Condition()
         self._latest: dict[int, FrameAnalysis] = {}
         self._jpeg_cache: dict[int, tuple[int, bytes]] = {}  # camera -> (frame index, jpeg)
@@ -62,7 +66,9 @@ class LiveViewHub:
                 return cached
         # Encode outside the lock: it is the expensive part.
         ok, buffer = cv2.imencode(
-            ".jpg", annotate(analysis), [cv2.IMWRITE_JPEG_QUALITY, self._quality]
+            ".jpg",
+            annotate(analysis, self._labels(camera_id) if self._labels else None),
+            [cv2.IMWRITE_JPEG_QUALITY, self._quality],
         )
         if not ok:
             return None

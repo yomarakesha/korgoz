@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: SecretStr | None = None
     qdrant_collection: str = "korgoz_faces"
+    qdrant_timeout_seconds: float = Field(default=5.0, gt=0)
     health_check_timeout_seconds: float = Field(default=2.0, gt=0)
 
     # --- Camera (single-camera MVP defaults) -----------------------------
@@ -92,8 +93,21 @@ class Settings(BaseSettings):
     track_max_lost_seconds: float = Field(default=3.0, gt=0.0)
     track_flush_interval_seconds: float = Field(default=5.0, gt=0.0)
 
-    # --- Recognition / events --------------------------------------------
-    face_match_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+    # --- Recognition (recognition mode only) -----------------------------
+    face_embedding_model_path: Path = Path("models/face_recognition_sface_2021dec.onnx")
+    # Cosine similarity; below it the face is UNKNOWN (no forced matching).
+    # Calibrated on sample portraits: same person 0.74-0.78, different people <= 0.25.
+    face_match_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
+    # Quality gate. Registration photos must pass it; live faces below it are skipped.
+    face_min_size: int = Field(default=40, ge=8)  # pixels, shorter side of the face box
+    face_registration_min_size: int = Field(default=80, ge=8)
+    face_min_sharpness: float = Field(default=30.0, ge=0.0)  # variance of the Laplacian
+    face_max_yaw: float = Field(default=0.5, ge=0.0, le=1.0)  # 0 = frontal, 1 = profile
+    # Per track: retry recognition at most this often until the person is identified.
+    recognition_interval_seconds: float = Field(default=1.0, gt=0.0)
+    face_upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)
+
+    # --- Events -----------------------------------------------------------
     event_cooldown_seconds: float = Field(default=30.0, ge=0.0)
 
     # --- Live view (served by the worker, proxied by the API) ------------

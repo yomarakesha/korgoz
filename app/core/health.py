@@ -49,21 +49,11 @@ def check_database(engine: Engine) -> ComponentStatus:
 
 
 def check_qdrant(settings: Settings) -> ComponentStatus:
-    # Replaced by VectorStore.health_check() in Phase 5.
-    headers = {}
-    if settings.qdrant_api_key is not None:
-        headers["api-key"] = settings.qdrant_api_key.get_secret_value()
-    try:
-        response = httpx.get(
-            f"{settings.qdrant_url.rstrip('/')}/healthz",
-            headers=headers,
-            timeout=settings.health_check_timeout_seconds,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        logger.warning("Qdrant health check failed: %s", type(exc).__name__)
-        return ComponentStatus.UNAVAILABLE
-    return ComponentStatus.OK
+    # Imported here: the factory pulls in OpenCV/ONNX, which /health itself doesn't need.
+    from app.pipeline.factory import build_vector_store
+
+    store = build_vector_store(settings, timeout_seconds=settings.health_check_timeout_seconds)
+    return ComponentStatus.OK if store.health_check() else ComponentStatus.UNAVAILABLE
 
 
 def count_online_cameras(engine: Engine) -> int:

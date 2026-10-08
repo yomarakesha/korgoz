@@ -11,7 +11,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api.errors import register_error_handlers
-from app.api.routes import cameras, health, live_view, tracks
+from app.api.routes import cameras, health, live_view, persons, tracks
 from app.config import get_settings
 from app.core.logging import setup_logging
 from app.database.session import get_engine
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(cameras.router)
     app.include_router(live_view.router)
     app.include_router(tracks.router)
+    app.include_router(persons.router)
     return app
 
 

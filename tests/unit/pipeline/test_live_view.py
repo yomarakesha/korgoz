@@ -5,10 +5,12 @@ import httpx
 import numpy as np
 import pytest
 
+from app.camera.types import Frame
 from app.detection.base import BoundingBox, DetectionResult
 from app.pipeline.annotate import annotate
 from app.pipeline.live_view import BOUNDARY, LiveViewHub, LiveViewServer
 from app.pipeline.types import FrameAnalysis
+from app.tracking.tracker import TrackedObject
 
 from .fakes import make_frame
 
@@ -70,3 +72,13 @@ def test_mjpeg_stream(server: tuple[LiveViewHub, str]) -> None:
         assert response.headers["content-type"].startswith("multipart/x-mixed-replace")
         chunk = next(response.iter_bytes())
     assert chunk.startswith(f"--{BOUNDARY}".encode())
+
+
+def test_annotate_uses_recognition_labels() -> None:
+    frame = make_frame(1)
+    frame = Frame(frame.camera_id, frame.index, frame.timestamp, np.zeros((200, 300, 3), np.uint8))
+    tracked = TrackedObject(5, BoundingBox(10, 80, 150, 190), 0.9, frame.timestamp, frame.timestamp)
+    item = FrameAnalysis(frame=frame, tracks=[tracked])
+    default = annotate(item)
+    named = annotate(item, {5: "Alice 0.91"})
+    assert not np.array_equal(default, named)  # different label text drawn

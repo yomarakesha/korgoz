@@ -9,9 +9,9 @@ Local-first video analytics platform (cameras → detection → tracking → eve
 2. `docs/spec.md` — the original specification (phases 1–10, MVP checklist).
 3. `README.md` — how to install/run (Linux step-by-step, Windows scripts).
 
-Status: phases 1–4 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking).
-**Next: Phase 5 — recognition** (SFace embeddings, Qdrant VectorStore, `POST /persons`,
-per-track recognition sink). Detailed plan in `docs/handoff.md` §4.
+Status: phases 1–5 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
+SFace recognition + Qdrant + `/persons`). **Next: Phase 6 — events, sessions, timeline,
+ontology.** Detailed plan in `docs/handoff.md` §4.
 
 ## Commands
 
@@ -19,7 +19,7 @@ per-track recognition sink). Detailed plan in `docs/handoff.md` §4.
 source .venv/bin/activate
 pytest                      # unit tests (no services needed)
 pytest -m ai                # real models (python -m scripts.download_models --samples)
-TEST_DATABASE_URL=... pytest -m integration
+TEST_DATABASE_URL=... pytest -m integration   # + running Qdrant on QDRANT_URL
 ruff check . && black --check . && mypy app tests scripts   # must stay clean
 uvicorn app.main:app --reload    # API
 python -m app.worker             # camera worker

@@ -30,7 +30,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 2 | Camera: OpenCV, RTSP, worker, reconnect | ✅ готово |
 | 3 | Person / Face detection, live view | ✅ готово |
 | 4 | Multi-object tracking (ByteTrack) | ✅ готово |
-| 5 | Recognition: embeddings, Qdrant, registration | — |
+| 5 | Recognition: embeddings, Qdrant, registration | ✅ готово |
 | 6 | Event Engine, sessions, timeline | — |
 | 7 | Analytics | — |
 | 8 | Dashboard (React + TS + Vite) | — |
@@ -57,7 +57,8 @@ app/
 ├── worker.py            процесс camera worker (python -m app.worker)
 ├── camera/              stream.py, buffer.py, worker.py, manager.py, status_store.py
 ├── detection/           Detector (abstraction), YOLOX person detector
-├── recognition/         FaceDetector (abstraction), YuNet face detector
+├── recognition/         YuNet (лица), quality check, SFace (embeddings), сервис, RecognitionSink
+├── vector_store/        VectorStore (abstraction), Qdrant
 ├── tracking/            Tracker (abstraction), ByteTrack + Kalman, TrackStore (DB)
 ├── pipeline/            FrameProcessor, factory, annotate, live view (MJPEG)
 ├── core/                logging.py (с маскировкой credentials), health.py
@@ -94,7 +95,7 @@ scripts\windows\start.bat                         :: вебка ноутбука
 scripts\windows\start.bat -Camera demo            :: тестовое видео, камера не нужна
 scripts\windows\start.bat -Camera "rtsp://user:pass@192.168.1.10:554/stream1"
 scripts\windows\start.bat -Camera "C:\videos\hall.mp4"
-scripts\windows\start.bat -Mode recognition       :: режим распознавания (после Phase 5)
+scripts\windows\start.bat -Mode recognition       :: режим распознавания лиц (нужен Qdrant)
 scripts\windows\stop.bat
 ```
 
@@ -237,6 +238,31 @@ Dahua: `/cam/realmonitor?channel=1&subtype=0`). Пароль камеры API н
 Можно добавить несколько камер сразу, например вебку и видео. Каждая работает
 независимо и получает свой `id`: 1, 2, …
 
+### Шаг 4а. Распознавание лиц (режим `recognition`)
+
+Нужен Qdrant (терминал 3) и `VISION_MODE=recognition` в `.env`. После смены режима
+перезапусти API и воркер.
+
+Зарегистрировать человека — одно фото, на нём ровно одно лицо анфас:
+
+```bash
+curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8000/persons
+```
+
+Ответ 201 — человек добавлен. Ответ 422 объясняет, что не так с фото: нет лица,
+несколько лиц, лицо слишком маленькое (< `FACE_REGISTRATION_MIN_SIZE` px), размытое
+или повёрнуто. Фото нигде не сохраняется: из него в памяти считается вектор
+(embedding), вектор уходит в Qdrant, в PostgreSQL — только имя и ссылка на вектор.
+
+Воркер подхватывает новых людей сразу, без перезапуска. В live view над рамкой
+появится `Alice 0.78` (имя и сходство) или `Unknown`.
+
+Удалить человека вместе с его векторами: `curl -X DELETE http://127.0.0.1:8000/persons/1`.
+
+Проверить без камеры: `python -m scripts.download_models --samples` скачивает
+портреты (public domain), например `data/samples/biden_1.jpg` — регистрируй его,
+а `biden_2.jpg` в виде видео покажет узнавание.
+
 ### Шаг 5. Что смотреть
 
 | Что | Где |
@@ -290,16 +316,21 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | `PERSON_CONFIDENCE_THRESHOLD` | `0.5` | минимальная уверенность для «человека» |
 | `ONNX_NUM_THREADS` | `0` | потоки ONNX Runtime (0 = авто) |
 | `FACE_DETECTION_THRESHOLD` | `0.8` | порог YuNet (только в recognition) |
+| `FACE_MATCH_THRESHOLD` | `0.40` | порог cosine similarity SFace; ниже → `Unknown` |
+| `FACE_MIN_SIZE` / `FACE_REGISTRATION_MIN_SIZE` | `40` / `80` | минимальный размер лица, px: в кадре / на фото регистрации |
+| `FACE_MIN_SHARPNESS` | `30` | минимальная резкость (дисперсия Лапласиана) |
+| `FACE_MAX_YAW` | `0.5` | максимальный поворот головы (0 — анфас, 1 — профиль) |
+| `RECOGNITION_INTERVAL_SECONDS` | `1` | как часто повторять попытку для ещё не узнанного трека |
 | `LIVE_VIEW_HOST` / `LIVE_VIEW_PORT` | `127.0.0.1` / `8001` | внутренний сервер кадров воркера |
 | `TRACKING_ENABLED` | `true` | трекинг людей (ByteTrack) |
 | `TRACK_MAX_LOST_SECONDS` | `3` | сколько человек может быть скрыт и сохранить номер трека |
 | `TRACK_LOW_THRESHOLD` / `TRACK_NEW_THRESHOLD` | `0.1` / `0.6` | неуверенные рамки продлевают треки; новый трек — только от уверенной |
-| `FACE_MATCH_THRESHOLD` | `0.45` | порог cosine similarity; ниже → UNKNOWN |
 | `EVENT_COOLDOWN_SECONDS` | `30` | антидублирование событий |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
 
-Значение `FACE_MATCH_THRESHOLD` — стартовое. Его нужно откалибровать под выбранную
-модель на этапе Phase 5.
+`FACE_MATCH_THRESHOLD=0.40` откалиброван на тестовых портретах: один человек — 0.72–0.78,
+разные люди — не выше 0.25. На плохой вебке сходство своего человека ниже; если
+узнаёт плохо, снижай до 0.36 (рекомендация OpenCV), но не ниже 0.30.
 
 ## API
 
@@ -314,6 +345,10 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | GET | `/cameras/{id}/stream` | Live view: MJPEG с рамками, вставляется как `<img src=...>` |
 | GET | `/tracks` | Треки, новые сверху. Фильтры: `camera_id`, `active`, `since`, `until`, `limit`, `offset` |
 | GET | `/tracks/{id}` | Трек: начало, последнее появление, конец, длительность |
+| POST | `/persons` | Регистрация (multipart: `name`, `photo`, `external_id?`, `description?`); только в `recognition` |
+| GET | `/persons` | Зарегистрированные люди |
+| GET | `/persons/{id}` | Человек (`embeddings` — сколько векторов в Qdrant) |
+| DELETE | `/persons/{id}` | Удалить человека и все его векторы |
 
 `stream_url` никогда не возвращается: API отдаёт `stream_url_masked`
 (`rtsp://***:***@host/...`) и `source_kind` (`usb` / `network` / `file`).
@@ -370,7 +405,8 @@ curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
 
 ## AI и live view
 
-Модели: YOLOX-s (люди, Apache-2.0) и YuNet (лица, MIT), работают на CPU. Подробности,
+Модели: YOLOX-s (люди, Apache-2.0), YuNet (лица, MIT) и SFace (embeddings лиц,
+Apache-2.0), работают на CPU. Подробности,
 лицензии и замеры скорости — в [docs/ai.md](docs/ai.md).
 
 Live view: http://127.0.0.1:8000/cameras/{id}/stream (подробно — в «Как запустить», шаг 5).
@@ -386,7 +422,7 @@ Live view: http://127.0.0.1:8000/cameras/{id}/stream (подробно — в «
 source .venv/bin/activate
 
 pytest                    # unit-тесты (~110 шт., ~10 с)
-pytest -m ai              # реальные модели: YOLOX находит пешеходов, YuNet — лицо
+pytest -m ai              # реальные модели: YOLOX, YuNet, SFace (узнаёт людей на портретах)
                           # (нужен python -m scripts.download_models --samples)
 pytest tests/unit/tracking -v   # только один модуль, подробно
 ```
@@ -400,6 +436,8 @@ TEST_DATABASE_URL=postgresql+psycopg://korgoz:korgoz_dev_pw@localhost:5432/korgo
 ```
 
 Без `TEST_DATABASE_URL` integration-тесты просто пропускаются (`SKIPPED`).
+Тест Qdrant (`tests/integration/test_qdrant.py`) использует запущенный Qdrant по
+`QDRANT_URL` и временную коллекцию; без Qdrant тоже пропускается.
 
 Качество кода (все три должны пройти без ошибок):
 
@@ -411,7 +449,7 @@ ruff check . && black --check . && mypy app tests scripts
 |---|---|---|
 | (без маркера) | ничего | `pytest` |
 | `ai` | скачанные модели | `pytest -m ai` |
-| `integration` | PostgreSQL + `TEST_DATABASE_URL` | `pytest -m integration` |
+| `integration` | PostgreSQL + `TEST_DATABASE_URL`, запущенный Qdrant | `pytest -m integration` |
 
 ## Развёртывание
 
