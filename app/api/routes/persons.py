@@ -39,7 +39,12 @@ def _require_recognition_mode(settings: Settings) -> None:
 
 
 def decode_image(data: bytes) -> Image:
-    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    try:
+        image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except cv2.error:  # e.g. above OPENCV_IO_MAX_IMAGE_PIXELS (see app/__init__.py)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Image dimensions are too large"
+        ) from None
     if image is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "File is not an image")
     scale = MAX_IMAGE_SIDE / max(image.shape[:2])

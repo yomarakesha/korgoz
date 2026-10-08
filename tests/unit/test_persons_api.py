@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import cv2
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
@@ -149,3 +150,12 @@ def test_delete_keeps_person_when_qdrant_is_down(env: Env) -> None:
     env.store.down = True
     assert env.client.delete(f"/persons/{person}").status_code == 503
     assert env.client.get(f"/persons/{person}").status_code == 200
+
+
+def test_decompression_bomb_is_rejected(env: Env) -> None:
+    # ~45 Mpx of zeros compresses to a few hundred KB but would decode to 135 MB.
+    ok, bomb = cv2.imencode(".png", np.zeros((9000, 5000), dtype=np.uint8))
+    assert ok and len(bomb) < 1_000_000
+    response = env.register(photo=bomb.tobytes())
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Image dimensions are too large"
