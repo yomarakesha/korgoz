@@ -31,7 +31,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 3 | Person / Face detection, live view | ✅ готово |
 | 4 | Multi-object tracking (ByteTrack) | ✅ готово |
 | 5 | Recognition: embeddings, Qdrant, registration | ✅ готово |
-| 6 | Event Engine, sessions, timeline | — |
+| 6 | Event Engine, sessions, timeline | ✅ готово |
 | 7 | Analytics | — |
 | 8 | Dashboard (React + TS + Vite) | — |
 | 9 | Security: auth, RBAC, audit | — |
@@ -62,8 +62,9 @@ app/
 ├── tracking/            Tracker (abstraction), ByteTrack + Kalman, TrackStore (DB)
 ├── pipeline/            FrameProcessor, factory, annotate, live view (MJPEG)
 ├── core/                logging.py (с маскировкой credentials), health.py
-├── database/            base.py, models.py, session.py, migrations/ (Alembic)
-└── events/types.py      EventType enum
+├── database/            base.py, models.py, session.py, writer.py (фоновая запись), migrations/
+├── events/              EventEngine, EventStore, TimelineService, EventType
+├── ontology/            объекты и связи Vision Ontology поверх ORM
 tests/
 ├── unit/                быстрые тесты, SQLite in-memory, без внешних сервисов
 └── integration/         реальный PostgreSQL (пропускаются, если недоступен)
@@ -273,6 +274,8 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 | Состояние системы | http://127.0.0.1:8000/health |
 | Список камер и их статус | http://127.0.0.1:8000/cameras |
 | Кто сейчас в кадре (активные треки) | http://127.0.0.1:8000/tracks?active=true |
+| События (вход, выход, узнан, камера offline…) | http://127.0.0.1:8000/events |
+| История человека | http://127.0.0.1:8000/persons/1/timeline |
 | История треков с длительностью | http://127.0.0.1:8000/tracks?camera_id=1 |
 
 Что должно получиться:
@@ -325,7 +328,9 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | `TRACKING_ENABLED` | `true` | трекинг людей (ByteTrack) |
 | `TRACK_MAX_LOST_SECONDS` | `3` | сколько человек может быть скрыт и сохранить номер трека |
 | `TRACK_LOW_THRESHOLD` / `TRACK_NEW_THRESHOLD` | `0.1` / `0.6` | неуверенные рамки продлевают треки; новый трек — только от уверенной |
+| `EVENTS_ENABLED` | `true` | создавать события (`/events`, timeline) |
 | `EVENT_COOLDOWN_SECONDS` | `30` | антидублирование событий |
+| `UNKNOWN_AFTER_ATTEMPTS` | `3` | `PERSON_UNKNOWN` только после стольких неудачных попыток узнать трек |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
 
 `FACE_MATCH_THRESHOLD=0.40` откалиброван на тестовых портретах: один человек — 0.72–0.78,
@@ -349,10 +354,13 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | GET | `/persons` | Зарегистрированные люди |
 | GET | `/persons/{id}` | Человек (`embeddings` — сколько векторов в Qdrant) |
 | DELETE | `/persons/{id}` | Удалить человека и все его векторы |
+| GET | `/persons/{id}/timeline` | История человека: события, камера, локация, время |
+| GET | `/events` | События, новые сверху. Фильтры: `camera_id`, `location_id`, `person_id`, `track_id`, `event_type` (можно несколько), `since`, `until`, `limit`, `offset` |
+| GET | `/events/{id}` | Событие |
 
 `stream_url` никогда не возвращается: API отдаёт `stream_url_masked`
 (`rtsp://***:***@host/...`) и `source_kind` (`usb` / `network` / `file`).
-Swagger UI с примерами: `/docs`.
+Swagger UI с примерами: `/docs`. Подробное описание, типы событий и примеры — [docs/api.md](docs/api.md).
 
 Пример ответа `/health`:
 

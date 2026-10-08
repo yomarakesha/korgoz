@@ -108,7 +108,11 @@ class Settings(BaseSettings):
     face_upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)
 
     # --- Events -----------------------------------------------------------
+    events_enabled: bool = True
+    # The same event (type + person, or type + track) is stored at most once per window.
     event_cooldown_seconds: float = Field(default=30.0, ge=0.0)
+    # PERSON_UNKNOWN only after this many good-quality faces of a track matched nobody.
+    unknown_after_attempts: int = Field(default=3, ge=1)
 
     # --- Live view (served by the worker, proxied by the API) ------------
     live_view_enabled: bool = True

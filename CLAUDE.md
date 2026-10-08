@@ -9,9 +9,9 @@ Local-first video analytics platform (cameras → detection → tracking → eve
 2. `docs/spec.md` — the original specification (phases 1–10, MVP checklist).
 3. `README.md` — how to install/run (Linux step-by-step, Windows scripts).
 
-Status: phases 1–5 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
-SFace recognition + Qdrant + `/persons`). **Next: Phase 6 — events, sessions, timeline,
-ontology.** Detailed plan in `docs/handoff.md` §4.
+Status: phases 1–6 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
+SFace recognition + Qdrant + `/persons`, events + sessions + timeline + ontology).
+**Next: Phase 7 — analytics.** Detailed plan in `docs/handoff.md` §4. API reference: `docs/api.md`.
 
 ## Commands
 
@@ -37,5 +37,6 @@ python -m app.worker             # camera worker
 - All settings in `app/config.py` (+ `.env.example`); secrets as `SecretStr`.
 - Never log credentials or exception text that may contain URLs; use `redact()` /
   `type(exc).__name__`. Never store video, face images or raw embeddings on disk.
-- Background DB writes go through a queue + thread (see `app/tracking/store.py`).
+- Background DB writes in the worker go through the shared `DatabaseWriter`
+  (`app/database/writer.py`) so tracks are written before their events.
 - Check model licenses (no AGPL / non-commercial weights).

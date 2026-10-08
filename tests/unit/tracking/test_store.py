@@ -7,7 +7,7 @@ from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
 from app.database.base import Base
-from app.database.models import Camera
+from app.database.models import Camera, TrackSession
 from app.database.models import Track as TrackRow
 from app.detection.base import BoundingBox
 from app.pipeline.types import FrameAnalysis
@@ -43,6 +43,11 @@ def add_camera(engine: Engine) -> None:
         session.commit()
 
 
+def sessions(engine: Engine) -> list[TrackSession]:
+    with Session(engine) as session:
+        return list(session.scalars(select(TrackSession)))
+
+
 def rows(engine: Engine) -> list[TrackRow]:
     with Session(engine) as session:
         return list(session.scalars(select(TrackRow).order_by(TrackRow.id)))
@@ -69,6 +74,10 @@ def test_track_lifecycle_is_persisted(sqlite_engine: Engine) -> None:
     assert row.track_identifier == "7"
     assert row.camera_id == 1
     assert row.ended_at is not None and row.ended_at.replace(tzinfo=UTC) == end
+    stay = sessions(sqlite_engine)[0]
+    assert stay.track_id == row.id
+    assert stay.camera_id == 1
+    assert stay.duration_seconds == 6
 
 
 def test_orphaned_tracks_are_closed_on_start(sqlite_engine: Engine) -> None:
@@ -82,6 +91,7 @@ def test_orphaned_tracks_are_closed_on_start(sqlite_engine: Engine) -> None:
     store.stop()
     row = rows(sqlite_engine)[0]
     assert row.ended_at is not None and row.ended_at.replace(tzinfo=UTC) == seen
+    assert [s.duration_seconds for s in sessions(sqlite_engine)] == [30]
 
 
 def test_database_outage_does_not_raise() -> None:

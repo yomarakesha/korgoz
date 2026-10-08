@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.pipeline.types import FrameAnalysis
 from app.recognition.detector import FaceDetection
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 TrackKey = tuple[int, int]  # (camera_id, tracker-local track_id)
 NameResolver = Callable[[int], str | None]
+# (camera_id, track_id, identity, frame time): every completed attempt, e.g. for events.
+ResultListener = Callable[[int, int, Identity, datetime], None]
 Clock = Callable[[], float]
 
 
@@ -67,8 +70,10 @@ class RecognitionSink:
         *,
         interval_seconds: float = 1.0,
         resolve_name: NameResolver | None = None,
+        on_result: ResultListener | None = None,
         clock: Clock = time.monotonic,
     ) -> None:
+        self._on_result = on_result
         self._service = service
         self._interval = interval_seconds
         self._resolve_name = resolve_name or (lambda _person_id: None)
@@ -102,6 +107,8 @@ class RecognitionSink:
         with self._lock:
             self._identities[key] = TrackIdentity(identity, name)
         logger.debug("Camera %s track %s: %s", key[0], key[1], self._identities[key].label)
+        if self._on_result is not None:
+            self._on_result(key[0], key[1], identity, analysis.frame.timestamp)
 
     def _due(self, key: TrackKey, now: float) -> bool:
         """Not identified yet and not tried within the interval (marks the attempt)."""

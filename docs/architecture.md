@@ -126,6 +126,25 @@ API: POST /persons → registration_embedding(photo) → Qdrant (вектор) +
   В воркере сбой Qdrant не ломает видео: трек просто останется без подписи и будет
   повторён позже.
 
+## Events (Phase 6)
+
+```
+FrameAnalysis ─→ TrackStore ── tracks, sessions ──┐
+             ─→ EventEngine ── EventRecord ───────┤  DatabaseWriter (1 поток, очередь)
+RecognitionSink.on_result ─→ EventEngine          ├─→ PostgreSQL
+CameraManager.on_status ─→ DatabaseStatusRecorder │
+                        └→ EventEngine.on_camera_status
+```
+
+- `EventEngine` (`app/events/engine.py`) решает, *что* произошло, и применяет cooldown.
+  Хранением занимается `EventStore` (`app/events/store.py`). В тестах вместо него — список.
+- `EventStore` в потоке записи превращает номер трека из live view в `tracks.id` (самая
+  новая строка с этим номером на камере) и копирует `location_id` камеры.
+- Порядок sinks важен: `TrackStore` → `EventEngine` → `RecognitionSink`. Строка трека
+  ставится в очередь раньше его событий, `TRACK_STARTED` — раньше `PERSON_RECOGNIZED`.
+- `TimelineService` (`app/events/timeline.py`) строит историю человека через
+  `Ontology` (`app/ontology/relations.py`).
+
 ## Модель данных (Vision Ontology, хранимая часть)
 
 ```
@@ -145,7 +164,9 @@ Person 1──* Event
 - Person → associated_with → Track (через события `PERSON_RECOGNIZED` с `track_id`)
 - Session → contains → Events (события того же `track_id` в интервале сессии)
 
-Отдельный слой `app/ontology/` (объекты и отношения поверх ORM) появится в Phase 6.
+Слой `app/ontology/`: `objects.py` — неизменяемые снимки сущностей (без открытой сессии БД),
+`relations.py` — связи из списка выше как SQL-запросы (`Ontology.events_of_person`,
+`tracks_of_person`, `events_in_session`, …).
 
 ## Проектные решения
 

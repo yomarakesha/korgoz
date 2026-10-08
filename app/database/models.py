@@ -142,6 +142,12 @@ class Event(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Read-only navigation for the ontology / timeline (no schema change).
+    camera: Mapped[Camera] = relationship(viewonly=True)
+    location: Mapped[Location | None] = relationship(viewonly=True)
+    person: Mapped[Person | None] = relationship(viewonly=True)
+    track: Mapped[Track | None] = relationship(viewonly=True)
+
 
 class TrackSession(Base):
     """A continuous stay of one track in front of one camera (the spec's `Session`).

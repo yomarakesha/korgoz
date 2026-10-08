@@ -7,7 +7,7 @@
 3. [README.md](../README.md) — как запустить (пошагово, с вебкой или видеофайлом).
 4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md) — детали.
 
-Состояние на момент передачи: **фазы 1–5 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **фазы 1–6 из 10 готовы**, всё протестировано и запушено.
 
 ---
 
@@ -20,6 +20,7 @@
 | 3 Detection | YOLOX (люди), YuNet (лица, только в recognition), live view MJPEG через API | `:8000/cameras/1/stream` |
 | 4 Tracking | Свой ByteTrack + Kalman, треки в БД, `GET /tracks` | `:8000/tracks?active=true` |
 | 5 Recognition | Quality check, SFace, Qdrant, `POST/GET/DELETE /persons`, подписи «Имя 0.78» в live view | README, шаг 4а |
+| 6 Events | EventEngine (вход/выход/узнан/неизвестный/камера), сессии, `GET /events`, `GET /persons/{id}/timeline`, ontology | `:8000/events` |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
@@ -30,9 +31,9 @@
 - камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
 
 Проверки качества:
-- `pytest` — 157 passed;
+- `pytest` — 179 passed (181, если запущен Qdrant);
 - `pytest -m ai` — 6 passed;
-- `pytest -m integration` — Qdrant 3 passed (PostgreSQL-тесты — при `TEST_DATABASE_URL`);
+- `pytest -m integration` — 5 passed (PostgreSQL + Qdrant);
 - ruff, black, `mypy --strict` — чисто.
 
 ---
@@ -46,7 +47,7 @@ korgoz-api (uvicorn app.main:app)          korgoz-worker (python -m app.worker)
   REST API, регистрация лиц                  камеры → детекция → трекинг → распознавание
   проксирует live view  ── HTTP 127.0.0.1:8001 ──→  LiveViewServer (/status, MJPEG)
          │                                          │
-         ├──────────── PostgreSQL ←──────────────────┤ (статусы камер, треки, люди)
+         ├──────────── PostgreSQL ←──────────────────┤ (камеры, треки, сессии, события, люди)
          └──────────── Qdrant ←──────────────────────┘ (векторы лиц)
 ```
 
@@ -64,14 +65,18 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
                                                    FrameAnalysis
                                                           │ sinks (список AnalysisSink)
                                      ┌────────────────────┼─────────────────────┐
-                                TrackStore      RecognitionSink        LiveViewHub      [сюда: EventEngine]
-                              (БД, свой поток)  (лица → люди)      (MJPEG, лениво)
+                          TrackStore      EventEngine     RecognitionSink      LiveViewHub
+                            (треки,       (события,        (лица → люди,      (MJPEG, лениво)
+                             сессии)       cooldown)        → EventEngine)
+                                 └──────────┬──────┘
+                                     DatabaseWriter (один поток, порядок записи сохраняется)
 ```
 
 **Главная точка расширения — `AnalysisSink`** (`app/pipeline/types.py`). Это функция,
 которая получает `FrameAnalysis` после каждого кадра. Event Engine и распознавание
 подключаются как новые sinks в `WorkerRuntime.__init__` (`app/worker.py`). Pipeline
-менять не нужно.
+менять не нужно. Запись в БД из воркера — только через общий `DatabaseWriter`
+(`app/database/writer.py`): так событие никогда не попадёт в БД раньше своего трека.
 
 `FrameAnalysis` содержит:
 - `frame` — кадр;
@@ -124,7 +129,9 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | InsightFace/ArcFace | YuNet + SFace из OpenCV Zoo | Модели InsightFace только для некоммерческого использования. SFace — Apache-2.0 |
 | Recognition: YuNet на вырезке трека (план в handoff) | Лица из детекции на всём кадре, привязка к треку по центру лица | Детекция лиц по кадру уже есть; второй прогон YuNet не нужен |
 | YOLO (Ultralytics) | YOLOX | Ultralytics под AGPL-3.0 |
-| Модель `Device` в БД | Не создана | Нет в списке моделей §9 ТЗ; добавить вместе с ontology в Phase 6 |
+| Модель `Device` в БД / ontology | Не создана | В ТЗ нет ни полей, ни сценариев; сейчас каждое устройство — камера |
+| `PERSON_DETECTED` | Не создаётся | Дублировал бы `PERSON_ENTERED` на каждом кадре; тип оставлен в enum |
+| Cooldown для всех событий | Кроме событий камер | Статус камеры и так меняется только при реальном изменении; пропуск `CAMERA_OFFLINE` исказил бы текущее состояние |
 
 ---
 
@@ -143,25 +150,20 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
   попыток, а не первую.
 - Порог 0.40 откалиброван на студийных портретах. Проверь на реальной камере объекта.
 
-### Phase 6 — Events, sessions, timeline, ontology (следующая)
+### Phase 6 — Events, sessions, timeline, ontology ✅ (готово)
 
-- `app/events/engine.py` — `EventEngine` как `AnalysisSink` плюс `StatusListener`
-  для камер. Источники событий:
-  - `tracks_started` → `TRACK_STARTED` и `PERSON_ENTERED`;
-  - `tracks_ended` → `TRACK_ENDED`, `PERSON_LEFT` и строка `TrackSession`
-    (`duration_seconds`);
-  - результаты RecognitionSink → `PERSON_RECOGNIZED` / `PERSON_UNKNOWN`;
-  - статус камеры → `CAMERA_ONLINE` / `CAMERA_OFFLINE`. Подключить к
-    `CameraManager(on_status=...)` рядом с `DatabaseStatusRecorder`.
-- **Cooldown:** ключ `(camera_id, event_type, person_id or track_id)`, окно
-  `EVENT_COOLDOWN_SECONDS`.
-- Писать в БД через очередь и фоновый поток, по образцу `app/tracking/store.py`.
-- `app/ontology/objects.py`, `relations.py` — доменные объекты и связи из §8 ТЗ поверх ORM.
-- `TimelineService` и эндпоинты `GET /events` (фильтры из §25 ТЗ, newest first),
-  `GET /events/{id}`, `GET /persons/{id}/timeline`.
-- Написать `docs/api.md`.
+Детали — [api.md](api.md) (типы событий, фильтры, timeline) и
+[architecture.md](architecture.md) «Events». Что важно знать для Phase 7:
 
-### Phase 7 — Analytics
+- `sessions` заполняется при завершении трека (`duration_seconds`), включая треки,
+  закрытые после аварии воркера (при следующем старте).
+- События пишутся с `timestamp` из видео (время трека/кадра), а не временем записи.
+- `PERSON_ENTERED`/`PERSON_LEFT` — по одному на трек. Если трек разрывается (человек
+  закрыт другим дольше `TRACK_MAX_LOST_SECONDS`), это два визита. Для `people_count`
+  это переоценка; при необходимости склеивать визиты по `person_id` или по времени.
+- Cooldown хранится в памяти воркера и сбрасывается при перезапуске.
+
+### Phase 7 — Analytics (следующая)
 
 `app/analytics/service.py`. Только SQL по `events`, `tracks`, `sessions`, видео не трогаем.
 
@@ -210,7 +212,7 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | Номер трека начинается с 1 после перезапуска воркера | by design | Глобальный id — `tracks.id` |
 | Время детекции YOLOX-tiny скачет (21–40 мс) | ноутбучный CPU | Длинный бенчмарк от сети (Phase 10) |
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
-| Нет `docs/api.md`, `docs/security.md` | — | Phase 6 и 9 |
+| Нет `docs/security.md` | — | Phase 9 |
 | Подписи в live view рисуются `cv2.putText`: кириллица в имени выводится как `???` | `pipeline/annotate.py` | Рисовать текст через Pillow с TTF-шрифтом или показывать имя в дашборде (Phase 8) |
 | Распознавание выполняется в потоке камеры (~9 мс на лицо) | `recognition/sink.py` | При многих людях одновременно вынести в отдельный поток с очередью |
 | **API без авторизации**, включая `POST/DELETE /persons` (биометрия). Любой, кто достучится до API, может регистрировать и удалять людей | все роуты | Phase 9 (JWT + роли). До этого API только на `127.0.0.1` (`API_HOST`, по умолчанию) и не выставлять наружу |

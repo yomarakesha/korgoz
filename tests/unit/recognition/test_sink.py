@@ -144,3 +144,15 @@ def test_vector_store_outage_is_contained() -> None:
 def test_label_without_a_known_name() -> None:
     assert TrackIdentity(Match(3, 0.876)).label == "Person #3 0.88"
     assert TrackIdentity(Unknown(0.2)).label == "Unknown"
+
+
+def test_results_are_reported_to_the_listener() -> None:
+    store = InMemoryVectorStore()
+    store.add_embedding(7, unit(1, 0, 0), "fake")
+    results: list[tuple[int, int, object, datetime]] = []
+    sink = RecognitionSink(
+        make_service(store=store),
+        on_result=lambda *args: results.append(args),
+    )
+    sink(analysis([PERSON], [FACE]))
+    assert results == [(1, 1, Match(7, 1.0), NOW)]

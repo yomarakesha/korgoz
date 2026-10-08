@@ -6,19 +6,22 @@ photo is decoded in memory and never written to disk.
 """
 
 import logging
+from datetime import datetime
 from typing import Annotated, cast
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import DbSession, RecognitionDep, SettingsDep, VectorStoreDep
+from app.api.schemas.event import TimelineEntry
 from app.api.schemas.person import PersonRead
 from app.camera.types import Image
 from app.config import Settings, VisionMode
 from app.database.models import FaceEmbedding, Person
+from app.events.timeline import PersonNotFoundError, TimelineService
 from app.recognition.service import RegistrationError
 from app.vector_store.base import VectorStoreError
 
@@ -119,6 +122,25 @@ def list_persons(db: DbSession) -> list[PersonRead]:
 @router.get("/{person_id}", response_model=PersonRead)
 def get_person(person_id: int, db: DbSession) -> PersonRead:
     return PersonRead.from_model(_get_or_404(db, person_id))
+
+
+@router.get("/{person_id}/timeline", response_model=list[TimelineEntry])
+def person_timeline(
+    person_id: int,
+    db: DbSession,
+    since: Annotated[datetime | None, Query(description="at or after (ISO 8601)")] = None,
+    until: Annotated[datetime | None, Query(description="before (ISO 8601)")] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[TimelineEntry]:
+    """Where and when the person was seen, newest first."""
+    try:
+        events = TimelineService(db).person_timeline(
+            person_id, since=since, until=until, limit=limit, offset=offset
+        )
+    except PersonNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Person not found") from None
+    return [TimelineEntry.from_object(e) for e in events]
 
 
 @router.delete("/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
