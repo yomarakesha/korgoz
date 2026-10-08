@@ -25,9 +25,18 @@ REST API на FastAPI. Запуск: `uvicorn app.main:app` (по умолчан
 | GET | `/cameras` | Список камер |
 | POST | `/cameras` | `{"name", "stream_url", "location_id?", "enabled?"}` → 201 |
 | GET | `/cameras/{id}` | Камера (`stream_url` не возвращается, только `stream_url_masked`) |
+| PATCH | `/cameras/{id}` | `{"name?", "location_id?", "enabled?"}` — меняются только переданные поля; `location_id: null` убирает локацию. `enabled` воркер подхватит после перезапуска |
 | DELETE | `/cameras/{id}` | Удалить вместе с треками, сессиями и событиями |
 | GET | `/cameras/{id}/snapshot` | Последний кадр с рамками (JPEG) |
 | GET | `/cameras/{id}/stream` | Live view, MJPEG (`<img src=...>`) |
+
+## Локации
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/locations` | Список (по имени) |
+| POST | `/locations` | `{"name", "description?"}` → 201; 409 — имя занято |
+| DELETE | `/locations/{id}` | → 204; камеры и прошлые события остаются, без локации |
 
 ## Треки
 
@@ -68,6 +77,7 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 |---|---|---|
 | GET | `/events` | Список событий с фильтрами |
 | GET | `/events/{id}` | Одно событие |
+| GET | `/events/count` | `{"count": N}` с теми же фильтрами, что у списка (например, «событий сегодня») |
 
 Фильтры `GET /events` (все необязательные, комбинируются через И):
 
@@ -169,3 +179,10 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 - визит = трек. Если человека надолго закрыли и трек разорвался, получится два визита;
 - `recognized_persons` и `repeat-visitors` имеют смысл только в режиме `recognition`;
 - открытый трек, который давно не обновлялся (упал воркер), в `occupancy` не считается.
+
+## Настройки и дашборд
+
+- `GET /settings` — текущие настройки **без секретов** (режим, пороги, часовой пояс,
+  имя файла модели). Адреса БД, Qdrant, камер и ключи не возвращаются.
+- `GET /ui/` — дашборд (если собран `frontend/dist`), `GET /` перенаправляет туда.
+  Подробно — [dashboard.md](dashboard.md).

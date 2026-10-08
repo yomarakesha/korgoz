@@ -139,3 +139,13 @@ def test_ontology_relations(sqlite_engine: Engine) -> None:
         location = ontology.location_of(event)
         assert location is not None and location.name == "Hall"
         assert ontology.events_in_session(99) == []
+
+
+def test_event_count_uses_the_same_filters(api_client: Any, sqlite_engine: Engine) -> None:
+    seed(sqlite_engine)
+    assert api_client.get("/events/count").json() == {"count": 6}
+    assert api_client.get("/events/count?camera_id=2").json() == {"count": 2}
+    since = at(1).isoformat().replace("+00:00", "Z")
+    assert api_client.get(f"/events/count?since={since}&event_type=PERSON_LEFT").json() == {
+        "count": 1
+    }

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession
-from app.api.schemas.camera import CameraCreate, CameraRead
+from app.api.schemas.camera import CameraCreate, CameraRead, CameraUpdate
 from app.database.models import Camera, Location
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
@@ -35,6 +35,25 @@ def create_camera(payload: CameraCreate, db: DbSession) -> CameraRead:
 @router.get("/{camera_id}", response_model=CameraRead)
 def get_camera(camera_id: int, db: DbSession) -> CameraRead:
     return CameraRead.from_model(_get_or_404(db, camera_id))
+
+
+@router.patch("/{camera_id}", response_model=CameraRead)
+def update_camera(camera_id: int, payload: CameraUpdate, db: DbSession) -> CameraRead:
+    """Rename, move to another location (`location_id: null` = none) or enable/disable.
+
+    The worker reads cameras at start: restart it for `enabled` to take effect.
+    """
+    camera = _get_or_404(db, camera_id)
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("location_id") is not None and db.get(Location, changes["location_id"]) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Location does not exist")
+    for field, value in changes.items():
+        if field != "location_id" and value is None:
+            continue  # name/enabled can't be cleared
+        setattr(camera, field, value)
+    db.commit()
+    db.refresh(camera)
+    return CameraRead.from_model(camera)
 
 
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)

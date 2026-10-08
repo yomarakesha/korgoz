@@ -7,7 +7,7 @@
 3. [README.md](../README.md) — как запустить (пошагово, с вебкой или видеофайлом).
 4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md) — детали.
 
-Состояние на момент передачи: **фазы 1–7 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **фазы 1–8 из 10 готовы**, всё протестировано и запушено.
 
 ---
 
@@ -22,6 +22,7 @@
 | 5 Recognition | Quality check, SFace, Qdrant, `POST/GET/DELETE /persons`, подписи «Имя 0.78» в live view | README, шаг 4а |
 | 6 Events | EventEngine (вход/выход/узнан/неизвестный/камера), сессии, `GET /events`, `GET /persons/{id}/timeline`, ontology | `:8000/events` |
 | 7 Analytics | occupancy, people count, dwell time, people flow + peak hours (локальный пояс), повторные визиты | `:8000/analytics/people-flow` |
+| 8 Dashboard | React + TS + Vite, 8 страниц (обзор, камеры, live view, люди, человек, события, аналитика, настройки), отдаётся API на `/ui/` | http://127.0.0.1:8000/ui/ |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
@@ -32,7 +33,8 @@
 - камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
 
 Проверки качества:
-- `pytest` — 198 passed (200, если запущен Qdrant);
+- `pytest` — 208 passed (210, если запущен Qdrant);
+- `cd frontend && npm test` — 23 passed, `npm run typecheck` — чисто;
 - `pytest -m ai` — 6 passed;
 - `pytest -m integration` — 8 passed (PostgreSQL + Qdrant);
 - ruff, black, `mypy --strict` — чисто.
@@ -183,21 +185,21 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - Integration-тест `tests/integration/test_analytics_postgres.py` проверяет именно
   PostgreSQL-ветку, включая пояс со сдвигом +5:30.
 
-### Phase 8 — Dashboard (следующая)
+### Phase 8 — Dashboard ✅ (готово)
 
-- `frontend/`: Vite + React + TypeScript, 8 страниц из §21 ТЗ.
-- Live View — просто `<img src="/cameras/{id}/stream">`.
-- В API понадобится CORS (`fastapi.middleware.cors`). Origin задавай настройкой.
-- Данные для страниц уже есть:
-  - Dashboard: `/health`, `/cameras`, `/analytics/occupancy`, `/analytics/people-count`,
-    `/events?limit=10`;
-  - Analytics: `/analytics/people-flow` (график по часам), `/dwell-time`, `/repeat-visitors`;
-  - Person Details: `/persons/{id}` + `/persons/{id}/timeline`.
+Подробно — [dashboard.md](dashboard.md). Коротко:
+- `frontend/`: React 19 + TypeScript (strict) + Vite, 8 страниц, тесты на vitest.
+- API отдаёт сборку на `/ui/`. Один адрес: CORS не нужен (`CORS_ORIGINS` — для чужого домена).
+- Новые эндпоинты для дашборда: `/locations`, `PATCH /cameras/{id}`, `/events/count`, `/settings`.
+- Сборка (`frontend/dist`) не хранится в git: её делает `npm run build` (на Windows — `setup.bat`).
 
-### Phase 9 — Security
+### Phase 9 — Security (следующая)
 
 - Таблицы `users` и `audit_log` (Alembic-миграция). Пароли хешировать argon2 или bcrypt.
 - JWT и роли admin/user через зависимости FastAPI.
+- Дашборд и API — один origin (`/ui/`). Удобнее всего cookie-сессия (HttpOnly, SameSite=Strict):
+  её получат и `fetch` из дашборда, и `<img>` live view. Добавь страницу входа и обработку
+  401 в `frontend/src/api.ts` (`request`).
 - **Важно:** `<img>` не умеет отправлять заголовок `Authorization`. Для
   `/cameras/{id}/stream` нужна cookie-сессия или короткоживущий токен в query.
 - Написать `docs/security.md`.

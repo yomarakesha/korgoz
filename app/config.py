@@ -119,6 +119,13 @@ class Settings(BaseSettings):
     # IANA zone for hourly buckets and peak hours, e.g. "Asia/Tashkent".
     analytics_timezone: str = "UTC"
 
+    # --- Dashboard ----------------------------------------------------------
+    # Built React app (cd frontend && npm run build), served by the API at /ui.
+    dashboard_dir: Path = Path("frontend/dist")
+    # Extra browser origins allowed to call the API, e.g. ["http://localhost:5173"].
+    # Not needed for /ui or the Vite dev server (it proxies the API).
+    cors_origins: list[str] = Field(default_factory=list)
+
     # --- Live view (served by the worker, proxied by the API) ------------
     live_view_enabled: bool = True
     live_view_host: str = "127.0.0.1"

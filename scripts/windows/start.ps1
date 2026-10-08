@@ -104,6 +104,7 @@ if ($cameraId) {
 
 Write-Host ''
 Write-Host 'KorGoz is running.' -ForegroundColor Green
+if (Test-Path (Join-Path $Root 'frontend\dist\index.html')) { Write-Host '  Dashboard : http://127.0.0.1:8000/ui/' }
 if ($cameraId) { Write-Host "  Live view : http://127.0.0.1:8000/cameras/$cameraId/stream" }
 Write-Host '  API docs  : http://127.0.0.1:8000/docs'
 Write-Host '  Health    : http://127.0.0.1:8000/health'

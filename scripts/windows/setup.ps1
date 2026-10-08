@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    One-time installation of KorGoz on Windows: Python, packages, PostgreSQL, Qdrant, models.
+    One-time installation of KorGoz on Windows: Python, packages, PostgreSQL, Qdrant, models,
+    dashboard.
 
 .DESCRIPTION
     Everything goes into the project folder (.venv and .local); no admin rights, no
@@ -16,7 +17,8 @@ param(
     [string]$Proxy = '',
     [switch]$SkipPostgres,
     [switch]$SkipQdrant,
-    [switch]$NoSamples
+    [switch]$NoSamples,
+    [switch]$SkipDashboard
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -152,6 +154,26 @@ if (-not $SkipQdrant) {
     }
     Ensure-Dir (Join-Path $QdrantDir 'storage')
     Write-Ok (Join-Path $QdrantDir 'qdrant.exe')
+}
+
+# ---------------------------------------------------------------- dashboard
+if (-not $SkipDashboard) {
+    Write-Step 'Dashboard (React, built once with Node.js)'
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        Write-Note 'Node.js not found: dashboard skipped. Install Node.js 22 LTS and re-run setup.'
+    } else {
+        Push-Location (Join-Path $Root 'frontend')
+        try {
+            & $npm.Source ci --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { Fail 'npm ci failed (network? try -Proxy)' }
+            & $npm.Source run build
+            if ($LASTEXITCODE -ne 0) { Fail 'Dashboard build failed' }
+        } finally {
+            Pop-Location
+        }
+        Write-Ok 'frontend\dist (served by the API at http://127.0.0.1:8000/ui/)'
+    }
 }
 
 if (-not $SkipPostgres) { Stop-LocalPostgres }

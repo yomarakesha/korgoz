@@ -110,6 +110,18 @@ cd /opt/korgoz/app
 sudo -u korgoz bash -c 'set -a; source /etc/korgoz/korgoz.env; set +a; .venv/bin/alembic upgrade head'
 ```
 
+## 7b. Дашборд
+
+Собирается один раз (и после каждого обновления кода) на машине с Node.js 22 LTS:
+
+```bash
+cd /opt/korgoz/app/frontend && npm ci && npm run build
+```
+
+Результат — статические файлы в `frontend/dist`. Их отдаёт сам API на `/ui/`, отдельный
+веб-сервер не нужен. Node.js на сервере не обязателен: можно собрать на другой машине
+и скопировать папку `frontend/dist`.
+
 ## 8. API как сервис systemd
 
 ```bash

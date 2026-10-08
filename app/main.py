@@ -8,10 +8,24 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api.dashboard import mount_dashboard
 from app.api.errors import register_error_handlers
-from app.api.routes import analytics, cameras, events, health, live_view, persons, tracks
+from app.api.routes import (
+    analytics,
+    cameras,
+    events,
+    health,
+    live_view,
+    locations,
+    persons,
+    tracks,
+)
+from app.api.routes import (
+    settings as settings_routes,
+)
 from app.config import get_settings
 from app.core.logging import setup_logging
 from app.database.session import get_engine
@@ -52,6 +66,16 @@ def create_app() -> FastAPI:
     app.include_router(persons.router)
     app.include_router(events.router)
     app.include_router(analytics.router)
+    app.include_router(locations.router)
+    app.include_router(settings_routes.router)
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    mount_dashboard(app, settings.dashboard_dir)
     return app
 
 

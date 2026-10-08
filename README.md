@@ -33,7 +33,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 5 | Recognition: embeddings, Qdrant, registration | ✅ готово |
 | 6 | Event Engine, sessions, timeline | ✅ готово |
 | 7 | Analytics | ✅ готово |
-| 8 | Dashboard (React + TS + Vite) | — |
+| 8 | Dashboard (React + TS + Vite) | ✅ готово |
 | 9 | Security: auth, RBAC, audit | — |
 | 10 | Optimization & benchmarks | — |
 
@@ -74,6 +74,7 @@ scripts/download_models.py   загрузка моделей с проверко
 scripts/benchmark_detector.py  замер скорости детекции на этой машине
 scripts/systemd/         unit-файлы systemd (korgoz-api, korgoz-worker)
 scripts/windows/         setup/start/stop/test для Windows (.bat + PowerShell)
+frontend/                дашборд: React + TypeScript + Vite (docs/dashboard.md)
 docs/                    handoff (передача проекта), spec (ТЗ), архитектура, AI, развёртывание
 ```
 
@@ -156,6 +157,9 @@ alembic upgrade head
 
 # AI-модели и тестовое видео (SHA-256 проверяется)
 python -m scripts.download_models --samples
+
+# Дашборд (нужен Node.js 22 LTS; без него API работает, но без веб-интерфейса)
+cd frontend && npm ci && npm run build && cd ..
 ```
 
 Если загрузка падает (`Failed to connect ... port 443`), значит нет доступа к GitHub.
@@ -267,6 +271,12 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 
 ### Шаг 5. Что смотреть
 
+Главное — **дашборд: http://127.0.0.1:8000/ui/**. В нём есть обзор, камеры, live view,
+люди с регистрацией по фото, события с фильтрами, аналитика с графиками и настройки.
+Подробнее — [docs/dashboard.md](docs/dashboard.md).
+
+То же самое напрямую через API:
+
 | Что | Где |
 |---|---|
 | **Live view с рамками `Track #N`** | http://127.0.0.1:8000/cameras/1/stream (`1` — id камеры) |
@@ -333,6 +343,8 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | `EVENTS_ENABLED` | `true` | создавать события (`/events`, timeline) |
 | `EVENT_COOLDOWN_SECONDS` | `30` | антидублирование событий |
 | `UNKNOWN_AFTER_ATTEMPTS` | `3` | `PERSON_UNKNOWN` только после стольких неудачных попыток узнать трек |
+| `DASHBOARD_DIR` | `frontend/dist` | собранный дашборд, который API отдаёт на `/ui` |
+| `CORS_ORIGINS` | `[]` | JSON-список origin, только если дашборд на другом домене |
 | `ANALYTICS_TIMEZONE` | `UTC` | часовой пояс для графиков по часам и пиковых часов, например `Asia/Tashkent` |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
 
@@ -360,6 +372,11 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | GET | `/persons/{id}/timeline` | История человека: события, камера, локация, время |
 | GET | `/events` | События, новые сверху. Фильтры: `camera_id`, `location_id`, `person_id`, `track_id`, `event_type` (можно несколько), `since`, `until`, `limit`, `offset` |
 | GET | `/events/{id}` | Событие |
+| GET | `/events/count` | Число событий с теми же фильтрами |
+| GET/POST | `/locations` | Локации; `DELETE /locations/{id}` |
+| PATCH | `/cameras/{id}` | Переименовать, сменить локацию, включить/выключить |
+| GET | `/settings` | Текущие настройки без секретов |
+| GET | `/ui/` | Дашборд |
 | GET | `/analytics/occupancy` | Сколько людей в кадре сейчас (или `?at=`), по камерам |
 | GET | `/analytics/people-count` | Визиты, узнанные люди, неизвестные за период |
 | GET | `/analytics/dwell-time` | Время пребывания: среднее, медиана, мин, макс |
@@ -437,7 +454,7 @@ Live view: http://127.0.0.1:8000/cameras/{id}/stream (подробно — в «
 ```bash
 source .venv/bin/activate
 
-pytest                    # unit-тесты (~110 шт., ~10 с)
+pytest                    # unit-тесты (~210 шт., ~15 с)
 pytest -m ai              # реальные модели: YOLOX, YuNet, SFace (узнаёт людей на портретах)
                           # (нужен python -m scripts.download_models --samples)
 pytest tests/unit/tracking -v   # только один модуль, подробно
@@ -454,6 +471,12 @@ TEST_DATABASE_URL=postgresql+psycopg://korgoz:korgoz_dev_pw@localhost:5432/korgo
 Без `TEST_DATABASE_URL` integration-тесты просто пропускаются (`SKIPPED`).
 Тест Qdrant (`tests/integration/test_qdrant.py`) использует запущенный Qdrant по
 `QDRANT_URL` и временную коллекцию; без Qdrant тоже пропускается.
+
+Тесты дашборда (vitest, без браузера и без API):
+
+```bash
+cd frontend && npm run typecheck && npm test
+```
 
 Качество кода (все три должны пройти без ошибок):
 

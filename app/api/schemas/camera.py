@@ -16,6 +16,14 @@ class CameraCreate(BaseModel):
     enabled: bool = True
 
 
+class CameraUpdate(BaseModel):
+    """Only the fields sent are changed. The stream URL can't be edited: re-create the camera."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    location_id: int | None = None
+    enabled: bool | None = None
+
+
 class CameraRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
