@@ -32,7 +32,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 4 | Multi-object tracking (ByteTrack) | ✅ готово |
 | 5 | Recognition: embeddings, Qdrant, registration | ✅ готово |
 | 6 | Event Engine, sessions, timeline | ✅ готово |
-| 7 | Analytics | — |
+| 7 | Analytics | ✅ готово |
 | 8 | Dashboard (React + TS + Vite) | — |
 | 9 | Security: auth, RBAC, audit | — |
 | 10 | Optimization & benchmarks | — |
@@ -65,6 +65,7 @@ app/
 ├── database/            base.py, models.py, session.py, writer.py (фоновая запись), migrations/
 ├── events/              EventEngine, EventStore, TimelineService, EventType
 ├── ontology/            объекты и связи Vision Ontology поверх ORM
+├── analytics/           occupancy, people count, dwell time, people flow, повторные визиты
 tests/
 ├── unit/                быстрые тесты, SQLite in-memory, без внешних сервисов
 └── integration/         реальный PostgreSQL (пропускаются, если недоступен)
@@ -276,6 +277,7 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 | Кто сейчас в кадре (активные треки) | http://127.0.0.1:8000/tracks?active=true |
 | События (вход, выход, узнан, камера offline…) | http://127.0.0.1:8000/events |
 | История человека | http://127.0.0.1:8000/persons/1/timeline |
+| Аналитика за 24 часа: поток по часам, время пребывания | http://127.0.0.1:8000/analytics/people-flow , http://127.0.0.1:8000/analytics/dwell-time |
 | История треков с длительностью | http://127.0.0.1:8000/tracks?camera_id=1 |
 
 Что должно получиться:
@@ -331,6 +333,7 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | `EVENTS_ENABLED` | `true` | создавать события (`/events`, timeline) |
 | `EVENT_COOLDOWN_SECONDS` | `30` | антидублирование событий |
 | `UNKNOWN_AFTER_ATTEMPTS` | `3` | `PERSON_UNKNOWN` только после стольких неудачных попыток узнать трек |
+| `ANALYTICS_TIMEZONE` | `UTC` | часовой пояс для графиков по часам и пиковых часов, например `Asia/Tashkent` |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
 
 `FACE_MATCH_THRESHOLD=0.40` откалиброван на тестовых портретах: один человек — 0.72–0.78,
@@ -357,6 +360,11 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | GET | `/persons/{id}/timeline` | История человека: события, камера, локация, время |
 | GET | `/events` | События, новые сверху. Фильтры: `camera_id`, `location_id`, `person_id`, `track_id`, `event_type` (можно несколько), `since`, `until`, `limit`, `offset` |
 | GET | `/events/{id}` | Событие |
+| GET | `/analytics/occupancy` | Сколько людей в кадре сейчас (или `?at=`), по камерам |
+| GET | `/analytics/people-count` | Визиты, узнанные люди, неизвестные за период |
+| GET | `/analytics/dwell-time` | Время пребывания: среднее, медиана, мин, макс |
+| GET | `/analytics/people-flow` | Входы/выходы по часам + пиковые часы (`?tz=`) |
+| GET | `/analytics/repeat-visitors` | Узнанные люди с несколькими визитами |
 
 `stream_url` никогда не возвращается: API отдаёт `stream_url_masked`
 (`rtsp://***:***@host/...`) и `source_kind` (`usb` / `network` / `file`).

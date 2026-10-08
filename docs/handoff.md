@@ -7,7 +7,7 @@
 3. [README.md](../README.md) — как запустить (пошагово, с вебкой или видеофайлом).
 4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md) — детали.
 
-Состояние на момент передачи: **фазы 1–6 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **фазы 1–7 из 10 готовы**, всё протестировано и запушено.
 
 ---
 
@@ -21,6 +21,7 @@
 | 4 Tracking | Свой ByteTrack + Kalman, треки в БД, `GET /tracks` | `:8000/tracks?active=true` |
 | 5 Recognition | Quality check, SFace, Qdrant, `POST/GET/DELETE /persons`, подписи «Имя 0.78» в live view | README, шаг 4а |
 | 6 Events | EventEngine (вход/выход/узнан/неизвестный/камера), сессии, `GET /events`, `GET /persons/{id}/timeline`, ontology | `:8000/events` |
+| 7 Analytics | occupancy, people count, dwell time, people flow + peak hours (локальный пояс), повторные визиты | `:8000/analytics/people-flow` |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
@@ -31,9 +32,9 @@
 - камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
 
 Проверки качества:
-- `pytest` — 179 passed (181, если запущен Qdrant);
+- `pytest` — 198 passed (200, если запущен Qdrant);
 - `pytest -m ai` — 6 passed;
-- `pytest -m integration` — 5 passed (PostgreSQL + Qdrant);
+- `pytest -m integration` — 8 passed (PostgreSQL + Qdrant);
 - ruff, black, `mypy --strict` — чисто.
 
 ---
@@ -163,29 +164,35 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
   это переоценка; при необходимости склеивать визиты по `person_id` или по времени.
 - Cooldown хранится в памяти воркера и сбрасывается при перезапуске.
 
-### Phase 7 — Analytics (следующая)
+### Phase 7 — Analytics ✅ (готово)
 
-`app/analytics/service.py`. Только SQL по `events`, `tracks`, `sessions`, видео не трогаем.
+`app/analytics/service.py` — только SQL по `tracks`, `sessions`, `events`. Описание
+эндпоинтов и полей — [api.md](api.md) «Аналитика».
 
-| Метрика | Как считать |
+| Метрика | Как считается |
 |---|---|
-| occupancy | активные треки сейчас или на момент времени |
-| people_count | число треков за период |
-| dwell_time | среднее и медиана `sessions.duration_seconds` |
-| people_flow | `PERSON_ENTERED` / `PERSON_LEFT` по часам |
-| peak_hours | `date_trunc('hour')` |
-| repeat_appearance | `PERSON_RECOGNIZED`, сгруппированные по `person_id` |
+| occupancy | треки, видимые в момент T; открытый трек без обновления `last_seen_at` дольше `2·TRACK_FLUSH_INTERVAL + TRACK_MAX_LOST` не считается (упавший воркер) |
+| people_count | треки, начатые в периоде; уникальные узнанные; `PERSON_UNKNOWN` |
+| dwell_time | сессии, **закончившиеся** в периоде: среднее, медиана, мин, макс |
+| people_flow + peak_hours | `PERSON_ENTERED` / `PERSON_LEFT` по часам в поясе `ANALYTICS_TIMEZONE` (или `?tz=`), пустые часы тоже отдаются |
+| repeat_appearance | узнанные на ≥ `min_visits` разных треках |
 
-Эндпоинты: `/analytics/occupancy`, `/analytics/people-flow`, `/analytics/dwell-time`.
+- Часы считаются в SQL. PostgreSQL: `date_trunc('hour', timezone(tz, ts))`, учитывает
+  переход на летнее время. SQLite (только тесты): сдвиг на текущий UTC-offset пояса.
+- Медиана: PostgreSQL — `percentile_cont`, SQLite — в Python.
+- Integration-тест `tests/integration/test_analytics_postgres.py` проверяет именно
+  PostgreSQL-ветку, включая пояс со сдвигом +5:30.
 
-Индексы под эти запросы уже есть: `events(camera_id, timestamp)`,
-`events(person_id, timestamp)`, `sessions(started_at)`.
-
-### Phase 8 — Dashboard
+### Phase 8 — Dashboard (следующая)
 
 - `frontend/`: Vite + React + TypeScript, 8 страниц из §21 ТЗ.
 - Live View — просто `<img src="/cameras/{id}/stream">`.
 - В API понадобится CORS (`fastapi.middleware.cors`). Origin задавай настройкой.
+- Данные для страниц уже есть:
+  - Dashboard: `/health`, `/cameras`, `/analytics/occupancy`, `/analytics/people-count`,
+    `/events?limit=10`;
+  - Analytics: `/analytics/people-flow` (график по часам), `/dwell-time`, `/repeat-visitors`;
+  - Person Details: `/persons/{id}` + `/persons/{id}/timeline`.
 
 ### Phase 9 — Security
 
@@ -213,6 +220,8 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | Время детекции YOLOX-tiny скачет (21–40 мс) | ноутбучный CPU | Длинный бенчмарк от сети (Phase 10) |
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
 | Нет `docs/security.md` | — | Phase 9 |
+| Нет индексов `tracks(started_at)` и `sessions(ended_at)` для аналитики | `database/models.py` | Добавить миграцией, когда данных станет много (замерить `EXPLAIN ANALYZE`) |
+| Разрыв трека (перекрытие дольше `TRACK_MAX_LOST_SECONDS`) = два визита в `people_count` | `analytics/service.py` | Склеивать визиты одного `person_id` или с паузой < N с |
 | Подписи в live view рисуются `cv2.putText`: кириллица в имени выводится как `???` | `pipeline/annotate.py` | Рисовать текст через Pillow с TTF-шрифтом или показывать имя в дашборде (Phase 8) |
 | Распознавание выполняется в потоке камеры (~9 мс на лицо) | `recognition/sink.py` | При многих людях одновременно вынести в отдельный поток с очередью |
 | **API без авторизации**, включая `POST/DELETE /persons` (биометрия). Любой, кто достучится до API, может регистрировать и удалять людей | все роуты | Phase 9 (JWT + роли). До этого API только на `127.0.0.1` (`API_HOST`, по умолчанию) и не выставлять наружу |

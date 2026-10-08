@@ -145,6 +145,14 @@ CameraManager.on_status ─→ DatabaseStatusRecorder │
 - `TimelineService` (`app/events/timeline.py`) строит историю человека через
   `Ontology` (`app/ontology/relations.py`).
 
+## Analytics (Phase 7)
+
+`AnalyticsService` (`app/analytics/service.py`) получает SQLAlchemy-сессию и часовой пояс.
+Он только читает таблицы `tracks`, `sessions` и `events`. Тяжёлую работу (группировку
+по часам, медиану) делает PostgreSQL. У SQLite в тестах для этого есть упрощённые
+ветки. Роуты (`app/api/routes/analytics.py`) разбирают период, фильтры и пояс
+и отдают dataclass-результаты сервиса как JSON.
+
 ## Модель данных (Vision Ontology, хранимая часть)
 
 ```

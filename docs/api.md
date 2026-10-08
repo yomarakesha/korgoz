@@ -130,3 +130,42 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 В timeline попадают события с `person_id` этого человека **и** все события треков, на
 которых он был узнан. Поэтому визит виден целиком: вход → узнан → выход, хотя в момент
 входа человек ещё не был известен. 404 — человека нет; `[]` — его ещё не видели.
+
+## Аналитика
+
+Все метрики считаются SQL-запросами по сохранённым трекам, сессиям и событиям. Видео
+повторно не анализируется.
+
+Общие параметры:
+
+| Параметр | По умолчанию | Смысл |
+|---|---|---|
+| `since`, `until` | последние 24 часа | период, `since <= t < until`, не длиннее 366 дней |
+| `camera_id`, `location_id` | все | ограничить камерой или локацией |
+| `tz` | `ANALYTICS_TIMEZONE` | IANA-пояс для разбивки по часам (`Asia/Tashkent`) |
+
+| Путь | Ответ |
+|---|---|
+| `GET /analytics/occupancy?at=` | `{"at", "total", "cameras": [{"camera_id", "name", "count"}]}` — люди в кадре в момент `at` (по умолчанию сейчас) |
+| `GET /analytics/people-count` | `{"period", "visits", "recognized_persons", "unknown_visits"}` |
+| `GET /analytics/dwell-time` | `{"period", "sessions", "average_seconds", "median_seconds", "min_seconds", "max_seconds"}` — по сессиям, закончившимся в периоде |
+| `GET /analytics/people-flow` | `{"period", "timezone", "peak_hours": [14, 9, 17], "buckets": [{"hour", "entered", "left"}]}` |
+| `GET /analytics/repeat-visitors?min_visits=2` | `[{"person_id", "name", "visits", "first_seen", "last_seen"}]` |
+
+Пример `people-flow` (пустые часы тоже есть, удобно для графика):
+
+```json
+{
+  "timezone": "Asia/Tashkent",
+  "peak_hours": [17],
+  "buckets": [
+    {"hour": "2026-10-08T16:00:00+05:00", "entered": 0, "left": 0},
+    {"hour": "2026-10-08T17:00:00+05:00", "entered": 4, "left": 4}
+  ]
+}
+```
+
+Оговорки:
+- визит = трек. Если человека надолго закрыли и трек разорвался, получится два визита;
+- `recognized_persons` и `repeat-visitors` имеют смысл только в режиме `recognition`;
+- открытый трек, который давно не обновлялся (упал воркер), в `occupancy` не считается.

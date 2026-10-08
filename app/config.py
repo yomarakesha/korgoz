@@ -8,6 +8,7 @@ development). Secrets are wrapped in `SecretStr` so they never show up in
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -114,11 +115,24 @@ class Settings(BaseSettings):
     # PERSON_UNKNOWN only after this many good-quality faces of a track matched nobody.
     unknown_after_attempts: int = Field(default=3, ge=1)
 
+    # --- Analytics ----------------------------------------------------------
+    # IANA zone for hourly buckets and peak hours, e.g. "Asia/Tashkent".
+    analytics_timezone: str = "UTC"
+
     # --- Live view (served by the worker, proxied by the API) ------------
     live_view_enabled: bool = True
     live_view_host: str = "127.0.0.1"
     live_view_port: int = Field(default=8001, ge=1, le=65535)
     live_view_jpeg_quality: int = Field(default=80, ge=10, le=100)
+
+    @field_validator("analytics_timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"Unknown IANA time zone: {value!r}") from exc
+        return value
 
     @field_validator("log_level", mode="before")
     @classmethod

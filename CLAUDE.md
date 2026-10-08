@@ -9,9 +9,9 @@ Local-first video analytics platform (cameras → detection → tracking → eve
 2. `docs/spec.md` — the original specification (phases 1–10, MVP checklist).
 3. `README.md` — how to install/run (Linux step-by-step, Windows scripts).
 
-Status: phases 1–6 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
-SFace recognition + Qdrant + `/persons`, events + sessions + timeline + ontology).
-**Next: Phase 7 — analytics.** Detailed plan in `docs/handoff.md` §4. API reference: `docs/api.md`.
+Status: phases 1–7 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
+SFace recognition + Qdrant + `/persons`, events + sessions + timeline + ontology, analytics).
+**Next: Phase 8 — React dashboard.** Detailed plan in `docs/handoff.md` §4. API reference: `docs/api.md`.
 
 ## Commands
 
