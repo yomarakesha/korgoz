@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from app.api.auth import AuditDep
 from app.api.dependencies import DbSession
 from app.api.schemas.camera import CameraCreate, CameraRead, CameraUpdate
 from app.database.models import Camera, Location
+from app.security.types import AuditAction
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -22,11 +24,14 @@ def list_cameras(db: DbSession) -> list[CameraRead]:
 
 
 @router.post("", response_model=CameraRead, status_code=status.HTTP_201_CREATED)
-def create_camera(payload: CameraCreate, db: DbSession) -> CameraRead:
+def create_camera(payload: CameraCreate, db: DbSession, record: AuditDep) -> CameraRead:
     if payload.location_id is not None and db.get(Location, payload.location_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Location does not exist")
     camera = Camera(**payload.model_dump())
     db.add(camera)
+    db.flush()
+    # Never the stream URL: it may contain the camera password.
+    record(AuditAction.CAMERA_CREATED, "camera", camera.id, name=camera.name)
     db.commit()
     db.refresh(camera)
     return CameraRead.from_model(camera)
@@ -38,7 +43,9 @@ def get_camera(camera_id: int, db: DbSession) -> CameraRead:
 
 
 @router.patch("/{camera_id}", response_model=CameraRead)
-def update_camera(camera_id: int, payload: CameraUpdate, db: DbSession) -> CameraRead:
+def update_camera(
+    camera_id: int, payload: CameraUpdate, db: DbSession, record: AuditDep
+) -> CameraRead:
     """Rename, move to another location (`location_id: null` = none) or enable/disable.
 
     The worker reads cameras at start: restart it for `enabled` to take effect.
@@ -51,12 +58,15 @@ def update_camera(camera_id: int, payload: CameraUpdate, db: DbSession) -> Camer
         if field != "location_id" and value is None:
             continue  # name/enabled can't be cleared
         setattr(camera, field, value)
+    record(AuditAction.CAMERA_UPDATED, "camera", camera.id, **changes)
     db.commit()
     db.refresh(camera)
     return CameraRead.from_model(camera)
 
 
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_camera(camera_id: int, db: DbSession) -> None:
-    db.delete(_get_or_404(db, camera_id))
+def delete_camera(camera_id: int, db: DbSession, record: AuditDep) -> None:
+    camera = _get_or_404(db, camera_id)
+    record(AuditAction.CAMERA_DELETED, "camera", camera.id, name=camera.name)
+    db.delete(camera)
     db.commit()

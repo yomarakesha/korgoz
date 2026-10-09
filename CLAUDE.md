@@ -9,9 +9,11 @@ Local-first video analytics platform (cameras → detection → tracking → eve
 2. `docs/spec.md` — the original specification (phases 1–10, MVP checklist).
 3. `README.md` — how to install/run (Linux step-by-step, Windows scripts).
 
-Status: phases 1–8 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
+Status: phases 1–9 done (foundation, cameras, YOLOX detection + live view, ByteTrack tracking,
 SFace recognition + Qdrant + `/persons`, events + sessions + timeline + ontology, analytics,
-React dashboard at `/ui/`). **Next: Phase 9 — security (auth, RBAC, audit).** Detailed plan in `docs/handoff.md` §4. API reference: `docs/api.md`.
+React dashboard at `/ui/`, security: login sessions + argon2id + admin/user roles + audit log).
+**Next: Phase 10 — optimization.** Detailed plan in `docs/handoff.md` §4. API reference: `docs/api.md`,
+security: `docs/security.md`.
 
 ## Commands
 
@@ -23,6 +25,7 @@ TEST_DATABASE_URL=... pytest -m integration   # + running Qdrant on QDRANT_URL
 ruff check . && black --check . && mypy app tests scripts   # must stay clean
 uvicorn app.main:app --reload    # API
 python -m app.worker             # camera worker
+python -m scripts.create_user admin --role admin   # first dashboard/API admin
 cd frontend && npm run typecheck && npm test && npm run build   # dashboard (docs/dashboard.md)
 ```
 
@@ -40,4 +43,8 @@ cd frontend && npm run typecheck && npm test && npm run build   # dashboard (doc
   `type(exc).__name__`. Never store video, face images or raw embeddings on disk.
 - Background DB writes in the worker go through the shared `DatabaseWriter`
   (`app/database/writer.py`) so tracks are written before their events.
+- Every API route except `/health` and `/auth/login` needs a login: include new routers with
+  `dependencies=[Depends(authorize)]` (GET = any user, writes = admin) in `app/main.py`.
+  Audit changes with `record: AuditDep` before `db.commit()`; never put secrets, stream URLs
+  or person names into audit `details`.
 - Check model licenses (no AGPL / non-commercial weights).

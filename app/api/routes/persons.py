@@ -15,6 +15,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, sta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.api.auth import AuditDep
 from app.api.dependencies import DbSession, RecognitionDep, SettingsDep, VectorStoreDep
 from app.api.schemas.event import TimelineEntry
 from app.api.schemas.person import PersonRead
@@ -23,6 +24,7 @@ from app.config import Settings, VisionMode
 from app.database.models import FaceEmbedding, Person
 from app.events.timeline import PersonNotFoundError, TimelineService
 from app.recognition.service import RegistrationError
+from app.security.types import AuditAction
 from app.vector_store.base import VectorStoreError
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ def register_person(
     db: DbSession,
     settings: SettingsDep,
     service: RecognitionDep,
+    record: AuditDep,
     name: Annotated[str, Form(min_length=1, max_length=255)],
     photo: Annotated[UploadFile, File(description="JPEG/PNG with exactly one face")],
     external_id: Annotated[str | None, Form(max_length=255)] = None,
@@ -99,6 +102,8 @@ def register_person(
     db.add(
         FaceEmbedding(person_id=person.id, vector_id=vector_id, model_name=service.embedder.name)
     )
+    # Only the id: the person's name and face stay out of the audit log.
+    record(AuditAction.PERSON_REGISTERED, "person", person.id)
     try:
         db.commit()
     except Exception:
@@ -144,7 +149,7 @@ def person_timeline(
 
 
 @router.delete("/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_person(person_id: int, db: DbSession, store: VectorStoreDep) -> None:
+def delete_person(person_id: int, db: DbSession, store: VectorStoreDep, record: AuditDep) -> None:
     """Delete the person and all their face vectors (right to be forgotten)."""
     person = _get_or_404(db, person_id)
     # Vectors first: if Qdrant is down, keep the person so the delete can be retried.
@@ -152,6 +157,7 @@ def delete_person(person_id: int, db: DbSession, store: VectorStoreDep) -> None:
         store.delete_person(person.id)
     except VectorStoreError:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _QDRANT_DOWN) from None
+    record(AuditAction.PERSON_DELETED, "person", person.id)
     db.delete(person)
     db.commit()
     logger.info("Deleted person %s", person_id)

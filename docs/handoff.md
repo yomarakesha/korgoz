@@ -5,9 +5,10 @@
 1. [spec.md](spec.md) — исходное ТЗ.
 2. Этот файл — что сделано, как устроено, что дальше.
 3. [README.md](../README.md) — как запустить (пошагово, с вебкой или видеофайлом).
-4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md) — детали.
+4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md),
+   [security.md](security.md) — детали.
 
-Состояние на момент передачи: **фазы 1–8 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **фазы 1–9 из 10 готовы**, всё протестировано и запушено.
 
 ---
 
@@ -23,6 +24,7 @@
 | 6 Events | EventEngine (вход/выход/узнан/неизвестный/камера), сессии, `GET /events`, `GET /persons/{id}/timeline`, ontology | `:8000/events` |
 | 7 Analytics | occupancy, people count, dwell time, people flow + peak hours (локальный пояс), повторные визиты | `:8000/analytics/people-flow` |
 | 8 Dashboard | React + TS + Vite, 8 страниц (обзор, камеры, live view, люди, человек, события, аналитика, настройки), отдаётся API на `/ui/` | http://127.0.0.1:8000/ui/ |
+| 9 Security | Вход (серверные сеансы, HttpOnly-cookie или Bearer), argon2id, роли admin/user, журнал аудита, защита от подбора, страницы «Пользователи» и «Журнал аудита» | `python -m scripts.create_user admin --role admin`, затем `/ui/` |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
@@ -33,10 +35,10 @@
 - камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
 
 Проверки качества:
-- `pytest` — 208 passed (210, если запущен Qdrant);
-- `cd frontend && npm test` — 23 passed, `npm run typecheck` — чисто;
+- `pytest` — 241 passed (243, если запущен Qdrant);
+- `cd frontend && npm test` — 30 passed, `npm run typecheck` — чисто;
 - `pytest -m ai` — 6 passed;
-- `pytest -m integration` — 8 passed (PostgreSQL + Qdrant);
+- `pytest -m integration` — 9 passed (PostgreSQL + Qdrant);
 - ruff, black, `mypy --strict` — чисто.
 
 ---
@@ -55,6 +57,8 @@ korgoz-api (uvicorn app.main:app)          korgoz-worker (python -m app.worker)
 ```
 
 - Процессы общаются **только через БД, Qdrant** и внутренний HTTP воркера (`LIVE_VIEW_PORT`).
+- Всё, кроме `/health` и `/auth/login`, требует входа. Роли проверяются в одном месте:
+  `app/api/auth.py` (`authorize` на роутерах в `app/main.py`). Подробно — [security.md](security.md).
 - API загружает модели лиц (YuNet + SFace) лениво, только при первом `POST /persons`.
   Состояние AI воркера он узнаёт через `GET :8001/status`.
 - Воркер читает список камер **только при старте** (известное ограничение, см. §5).
@@ -134,6 +138,7 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | YOLO (Ultralytics) | YOLOX | Ultralytics под AGPL-3.0 |
 | Модель `Device` в БД / ontology | Не создана | В ТЗ нет ни полей, ни сценариев; сейчас каждое устройство — камера |
 | `PERSON_DETECTED` | Не создаётся | Дублировал бы `PERSON_ENTERED` на каждом кадре; тип оставлен в enum |
+| JWT | Серверные сеансы: случайный токен в HttpOnly-cookie (или `Bearer`), в БД только SHA-256 | ТЗ допускает «безопасную session-based auth». Выход и блокировка действуют сразу, нет ключа подписи ([security.md](security.md)) |
 | Cooldown для всех событий | Кроме событий камер | Статус камеры и так меняется только при реальном изменении; пропуск `CAMERA_OFFLINE` исказил бы текущее состояние |
 
 ---
@@ -193,16 +198,21 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - Новые эндпоинты для дашборда: `/locations`, `PATCH /cameras/{id}`, `/events/count`, `/settings`.
 - Сборка (`frontend/dist`) не хранится в git: её делает `npm run build` (на Windows — `setup.bat`).
 
-### Phase 9 — Security (следующая)
+### Phase 9 — Security ✅ (готово)
 
-- Таблицы `users` и `audit_log` (Alembic-миграция). Пароли хешировать argon2 или bcrypt.
-- JWT и роли admin/user через зависимости FastAPI.
-- Дашборд и API — один origin (`/ui/`). Удобнее всего cookie-сессия (HttpOnly, SameSite=Strict):
-  её получат и `fetch` из дашборда, и `<img>` live view. Добавь страницу входа и обработку
-  401 в `frontend/src/api.ts` (`request`).
-- **Важно:** `<img>` не умеет отправлять заголовок `Authorization`. Для
-  `/cameras/{id}/stream` нужна cookie-сессия или короткоживущий токен в query.
-- Написать `docs/security.md`.
+Подробно — [security.md](security.md). Коротко:
+- Таблицы `users`, `auth_sessions`, `audit_log` (миграция `5b354c3d999e`). Пароли — argon2id
+  (`argon2-cffi`, MIT).
+- `app/security/` — пароли, сеансы, ограничитель попыток входа, запись аудита.
+  `app/api/auth.py` — зависимости `CurrentUser`, `AdminUser`, `authorize`, `AuditDep`.
+- Новый роут на существующем роутере защищён автоматически: GET — любой вошедший,
+  остальное — admin. Тест `test_auth_api.py` обходит все маршруты OpenAPI.
+- Аудит пишется в той же транзакции, что и изменение: `record: AuditDep` в роуте,
+  вызов до `db.commit()`. Не пиши в `details` пароли, `stream_url`, имена людей.
+- Первый админ и сброс пароля — `scripts/create_user.py`. Камеру без входа (для
+  `start.bat`) добавляет `scripts/add_camera.py`.
+- Дашборд: страница входа, «Пользователи», «Журнал аудита», смена пароля в «Настройках»;
+  для роли user кнопки изменения скрыты.
 
 ### Phase 10 — Optimization
 
@@ -221,12 +231,14 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | Номер трека начинается с 1 после перезапуска воркера | by design | Глобальный id — `tracks.id` |
 | Время детекции YOLOX-tiny скачет (21–40 мс) | ноутбучный CPU | Длинный бенчмарк от сети (Phase 10) |
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
-| Нет `docs/security.md` | — | Phase 9 |
 | Нет индексов `tracks(started_at)` и `sessions(ended_at)` для аналитики | `database/models.py` | Добавить миграцией, когда данных станет много (замерить `EXPLAIN ANALYZE`) |
 | Разрыв трека (перекрытие дольше `TRACK_MAX_LOST_SECONDS`) = два визита в `people_count` | `analytics/service.py` | Склеивать визиты одного `person_id` или с паузой < N с |
 | Подписи в live view рисуются `cv2.putText`: кириллица в имени выводится как `???` | `pipeline/annotate.py` | Рисовать текст через Pillow с TTF-шрифтом или показывать имя в дашборде (Phase 8) |
 | Распознавание выполняется в потоке камеры (~9 мс на лицо) | `recognition/sink.py` | При многих людях одновременно вынести в отдельный поток с очередью |
-| **API без авторизации**, включая `POST/DELETE /persons` (биометрия). Любой, кто достучится до API, может регистрировать и удалять людей | все роуты | Phase 9 (JWT + роли). До этого API только на `127.0.0.1` (`API_HOST`, по умолчанию) и не выставлять наружу |
+| Счётчик неудачных входов хранится в памяти процесса API | `security/login_limiter.py` | Достаточно для одного процесса. При нескольких воркерах uvicorn — хранить в БД |
+| Открытый MJPEG-поток не рвётся при выходе или блокировке пользователя | `routes/live_view.py` | Перепроверять сеанс раз в N с внутри `relay()` |
+| Чтение (просмотр видео, списка людей) не пишется в аудит | `security/audit.py` | Если нужно по политике — писать `VIEW_*` хотя бы для `/persons` и live view |
+| Внутренний сервер кадров воркера без авторизации | `pipeline/live_view.py` | Слушает только `127.0.0.1`. Не открывать наружу |
 | Один вектор на человека (одно фото при регистрации) | `POST /persons` | Эндпоинт `POST /persons/{id}/photos` — несколько ракурсов повышают точность |
 | Лицензия весов YOLOX (обучены на COCO) | `docs/ai.md` | Подтвердить у юриста перед коммерцией |
 

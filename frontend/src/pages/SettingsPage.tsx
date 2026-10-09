@@ -1,3 +1,5 @@
+import { type FormEvent, useState } from "react";
+
 import { api } from "../api";
 import { ErrorNote, Notice } from "../components/Notice";
 import { StatusBadge, componentTone } from "../components/StatusBadge";
@@ -80,6 +82,73 @@ export function SettingsPage({ settings }: { settings: PublicSettings | undefine
           </p>
         </div>
       )}
+      <PasswordForm />
     </section>
+  );
+}
+
+function PasswordForm() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [error, setError] = useState<Error>();
+  const [done, setDone] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(undefined);
+    setDone(false);
+    if (next !== repeat) {
+      setError(new Error("новые пароли не совпадают"));
+      return;
+    }
+    try {
+      await api.changePassword(current, next);
+      setDone(true);
+      setCurrent("");
+      setNext("");
+      setRepeat("");
+    } catch (reason) {
+      setError(reason as Error);
+    }
+  }
+
+  return (
+    <>
+      <h2>Сменить мой пароль</h2>
+      <p className="muted">Остальные ваши сеансы (другие браузеры и устройства) будут завершены.</p>
+      <ErrorNote error={error} />
+      {done && <p className="notice notice-ok">Пароль изменён.</p>}
+      <form className="form-row" onSubmit={(e) => void submit(e)}>
+        <input
+          type="password"
+          aria-label="Текущий пароль"
+          placeholder="Текущий пароль"
+          autoComplete="current-password"
+          value={current}
+          onChange={(e) => setCurrent(e.target.value)}
+          required
+        />
+        <input
+          type="password"
+          aria-label="Новый пароль"
+          placeholder="Новый пароль"
+          autoComplete="new-password"
+          value={next}
+          onChange={(e) => setNext(e.target.value)}
+          required
+        />
+        <input
+          type="password"
+          aria-label="Повторите новый пароль"
+          placeholder="Повторите новый пароль"
+          autoComplete="new-password"
+          value={repeat}
+          onChange={(e) => setRepeat(e.target.value)}
+          required
+        />
+        <button type="submit">Сменить</button>
+      </form>
+    </>
   );
 }

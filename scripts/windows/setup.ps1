@@ -130,6 +130,12 @@ Write-Step 'Database tables (alembic upgrade head)'
 if ($LASTEXITCODE -ne 0) { Fail 'Migrations failed: is PostgreSQL running and DATABASE_URL in .env correct?' }
 Write-Ok 'schema up to date'
 
+# ---------------------------------------------------------------- first admin
+Write-Step 'Dashboard administrator'
+& $VenvPy -m scripts.create_user admin --role admin --if-no-users
+if ($LASTEXITCODE -ne 0) { Fail 'Could not create the administrator: re-run setup and try again' }
+Write-Ok 'log in at http://127.0.0.1:8000/ui/ (forgot it? python -m scripts.create_user admin --reset)'
+
 # ---------------------------------------------------------------- AI models
 Write-Step 'AI models (YOLOX, YuNet) and sample media'
 $modelArgs = @('-m', 'scripts.download_models')

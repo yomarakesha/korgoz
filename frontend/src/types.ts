@@ -151,3 +151,42 @@ export interface RepeatVisitor {
   first_seen: string;
   last_seen: string;
 }
+
+export type UserRole = "admin" | "user";
+
+export interface User {
+  id: number;
+  username: string;
+  role: UserRole;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export type AuditAction =
+  | "LOGIN"
+  | "LOGIN_FAILED"
+  | "LOGOUT"
+  | "PASSWORD_CHANGED"
+  | "USER_CREATED"
+  | "USER_UPDATED"
+  | "USER_DELETED"
+  | "CAMERA_CREATED"
+  | "CAMERA_UPDATED"
+  | "CAMERA_DELETED"
+  | "LOCATION_CREATED"
+  | "LOCATION_DELETED"
+  | "PERSON_REGISTERED"
+  | "PERSON_DELETED";
+
+export interface AuditEntry {
+  id: number;
+  timestamp: string;
+  user_id: number | null;
+  username: string | null;
+  action: AuditAction;
+  target_type: string | null;
+  target_id: number | null;
+  ip_address: string | null;
+  details: Record<string, unknown>;
+}

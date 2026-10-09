@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.camera.types import CameraStatus
 from app.database.base import Base, JSONType, TimestampMixin
 from app.events.types import EventType
+from app.security.types import AuditAction, UserRole
 
 
 class PersonStatus(StrEnum):
@@ -165,7 +166,64 @@ class TrackSession(Base):
     duration_seconds: Mapped[float | None] = mapped_column(Float)
 
 
+class User(TimestampMixin, Base):
+    """A dashboard / API account (not a tracked `Person`)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    # argon2id hash with its own salt and parameters; never the password itself.
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(
+        _str_enum(UserRole), default=UserRole.USER, server_default="user"
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    def __repr__(self) -> str:  # password_hash deliberately excluded
+        return f"User(id={self.id!r}, username={self.username!r}, role={self.role!r})"
+
+
+class AuthSession(Base):
+    """A login session. The cookie holds a random token; only its SHA-256 is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # SET NULL keeps the history after a user is deleted; `username` is a snapshot.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    username: Mapped[str | None] = mapped_column(String(64))
+    action: Mapped[AuditAction] = mapped_column(_str_enum(AuditAction), index=True)
+    target_type: Mapped[str | None] = mapped_column(String(32))
+    target_id: Mapped[int | None]
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    # Never credentials, stream URLs or biometric data.
+    details: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict, nullable=False)
+
+
 __all__ = [
+    "AuditLog",
+    "AuthSession",
     "Base",
     "Camera",
     "CameraStatus",
@@ -176,4 +234,6 @@ __all__ = [
     "PersonStatus",
     "Track",
     "TrackSession",
+    "User",
+    "UserRole",
 ]

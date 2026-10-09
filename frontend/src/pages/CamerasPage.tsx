@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { ErrorNote, Notice } from "../components/Notice";
 import { StatusBadge, cameraTone } from "../components/StatusBadge";
 import { CAMERA_STATUS_LABELS } from "../format";
@@ -8,6 +9,7 @@ import { useLookups } from "../lookups";
 
 export function CamerasPage() {
   const lookups = useLookups(10_000);
+  const { isAdmin } = useAuth();
   const [actionError, setActionError] = useState<Error>();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -80,6 +82,7 @@ export function CamerasPage() {
                     <select
                       aria-label={`Локация камеры ${camera.name}`}
                       value={camera.location_id ?? ""}
+                      disabled={!isAdmin}
                       onChange={(e) =>
                         void run(() =>
                           api.updateCamera(camera.id, {
@@ -101,20 +104,23 @@ export function CamerasPage() {
                       type="checkbox"
                       aria-label={`Камера ${camera.name} включена`}
                       checked={camera.enabled}
+                      disabled={!isAdmin}
                       onChange={(e) => void run(() => api.updateCamera(camera.id, { enabled: e.target.checked }))}
                     />
                   </td>
                   <td>
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => {
-                        if (window.confirm(`Удалить камеру «${camera.name}» вместе с её треками и событиями?`))
-                          void run(() => api.deleteCamera(camera.id));
-                      }}
-                    >
-                      Удалить
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => {
+                          if (window.confirm(`Удалить камеру «${camera.name}» вместе с её треками и событиями?`))
+                            void run(() => api.deleteCamera(camera.id));
+                        }}
+                      >
+                        Удалить
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -123,49 +129,62 @@ export function CamerasPage() {
         </div>
       )}
 
-      <h2>Добавить камеру</h2>
-      <form className="form-row" onSubmit={addCamera}>
-        <input placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} required />
-        <input
-          placeholder="0, rtsp://user:pass@host/stream или путь к видео"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          required
-          className="wide"
-        />
-        <select aria-label="Локация" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-          <option value="">Без локации</option>
-          {data?.locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <button type="submit">Добавить</button>
-      </form>
+      {isAdmin && (
+        <>
+          <h2>Добавить камеру</h2>
+          <form className="form-row" onSubmit={addCamera}>
+            <input placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} required />
+            <input
+              placeholder="0, rtsp://user:pass@host/stream или путь к видео"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+              className="wide"
+            />
+            <select aria-label="Локация" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <option value="">Без локации</option>
+              {data?.locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <button type="submit">Добавить</button>
+          </form>
+        </>
+      )}
 
       <h2>Локации</h2>
       <ul className="plain-list">
         {data?.locations.map((l) => (
           <li key={l.id}>
             {l.name}{" "}
-            <button
-              type="button"
-              className="link-button"
-              onClick={() => {
-                if (window.confirm(`Удалить локацию «${l.name}»? Камеры останутся без локации.`))
-                  void run(() => api.deleteLocation(l.id));
-              }}
-            >
-              удалить
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  if (window.confirm(`Удалить локацию «${l.name}»? Камеры останутся без локации.`))
+                    void run(() => api.deleteLocation(l.id));
+                }}
+              >
+                удалить
+              </button>
+            )}
           </li>
         ))}
       </ul>
-      <form className="form-row" onSubmit={addLocation}>
-        <input placeholder="Новая локация" value={locationName} onChange={(e) => setLocationName(e.target.value)} required />
-        <button type="submit">Добавить</button>
-      </form>
+      {isAdmin && (
+        <form className="form-row" onSubmit={addLocation}>
+          <input
+            placeholder="Новая локация"
+            value={locationName}
+            onChange={(e) => setLocationName(e.target.value)}
+            required
+          />
+          <button type="submit">Добавить</button>
+        </form>
+      )}
     </section>
   );
 }

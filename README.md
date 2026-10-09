@@ -34,7 +34,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 6 | Event Engine, sessions, timeline | ✅ готово |
 | 7 | Analytics | ✅ готово |
 | 8 | Dashboard (React + TS + Vite) | ✅ готово |
-| 9 | Security: auth, RBAC, audit | — |
+| 9 | Security: auth, RBAC, audit | ✅ готово |
 | 10 | Optimization & benchmarks | — |
 
 ## Архитектура
@@ -86,8 +86,8 @@ docs/                    handoff (передача проекта), spec (ТЗ),
 
 | Файл | Что делает |
 |---|---|
-| `setup.bat` | **Один раз.** Python 3.12 (через winget или python.org, если его нет), пакеты, portable PostgreSQL 18 (~340 МБ, свой порт 55432), Qdrant, AI-модели, тестовое видео, таблицы в БД. Пароль БД генерируется случайно и записывается в `.env`. Если повторить запуск, готовые шаги пропускаются, а оборванные загрузки докачиваются |
-| `start.bat` | Запускает PostgreSQL, Qdrant, API и воркер (API и воркер в отдельных окнах с логами), добавляет камеру и открывает live view в браузере |
+| `setup.bat` | **Один раз.** Python 3.12 (через winget или python.org, если его нет), пакеты, portable PostgreSQL 18 (~340 МБ, свой порт 55432), Qdrant, AI-модели, тестовое видео, таблицы в БД, администратор дашборда (логин `admin`, пароль спросит). Пароль БД генерируется случайно и записывается в `.env`. Если повторить запуск, готовые шаги пропускаются, а оборванные загрузки докачиваются |
+| `start.bat` | Запускает PostgreSQL, Qdrant, API и воркер (API и воркер в отдельных окнах с логами), добавляет камеру и открывает в браузере дашборд (`/ui/live`, сначала вход) |
 | `stop.bat` | Останавливает всё |
 | `test.bat` | Тесты. `test.bat -All` дополнительно запускает тесты моделей, integration-тесты на PostgreSQL, ruff, black и mypy |
 
@@ -160,7 +160,14 @@ python -m scripts.download_models --samples
 
 # Дашборд (нужен Node.js 22 LTS; без него API работает, но без веб-интерфейса)
 cd frontend && npm ci && npm run build && cd ..
+
+# Первый администратор (спросит пароль дважды; не короче 10 символов)
+python -m scripts.create_user admin --role admin
 ```
+
+Без входа API отвечает `401` на всё, кроме `/health`. Пользователей с ролью «просмотр»
+админ добавляет в дашборде, раздел «Пользователи». Забыли пароль:
+`python -m scripts.create_user admin --reset`. Подробно — [docs/security.md](docs/security.md).
 
 Если загрузка падает (`Failed to connect ... port 443`), значит нет доступа к GitHub.
 Включи VPN или прокси и повтори.
@@ -204,6 +211,14 @@ cd ~/qdrant && QDRANT__STORAGE__STORAGE_PATH=./storage QDRANT__SERVICE__HOST=127
 
 ### Шаг 4. Добавить камеру
 
+Проще всего добавить камеру в дашборде: http://127.0.0.1:8000/ui/cameras. Ниже тот же
+путь через `curl`. Сначала войди: cookie сеанса сохранится в `cookies.txt`.
+
+```bash
+curl -c cookies.txt -X POST localhost:8000/auth/login -H 'content-type: application/json' \
+     -d '{"username": "admin", "password": "твой_пароль"}'
+```
+
 Камеры добавляются через API, пока работает терминал 1. **После добавления
 перезапусти воркер** (Ctrl+C в терминале 2, затем снова `python -m app.worker`):
 список камер он читает только при старте.
@@ -212,7 +227,7 @@ cd ~/qdrant && QDRANT__STORAGE__STORAGE_PATH=./storage QDRANT__SERVICE__HOST=127
 
 ```bash
 python -m scripts.check_camera --source 0      # проверка: печатает разрешение и FPS
-curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
+curl -b cookies.txt -X POST localhost:8000/cameras -H 'content-type: application/json' \
      -d '{"name": "Webcam", "stream_url": "0"}'
 ```
 
@@ -222,7 +237,7 @@ curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
 **Вариант Б — тестовое видео с пешеходами** (без камеры, удобно для проверки):
 
 ```bash
-curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
+curl -b cookies.txt -X POST localhost:8000/cameras -H 'content-type: application/json' \
      -d '{"name": "Demo", "stream_url": "data/samples/vtest.avi"}'
 ```
 
@@ -233,7 +248,7 @@ curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
 
 ```bash
 python -m scripts.check_camera --source "rtsp://user:password@192.168.1.10:554/stream1"
-curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
+curl -b cookies.txt -X POST localhost:8000/cameras -H 'content-type: application/json' \
      -d '{"name": "Entrance", "stream_url": "rtsp://user:password@192.168.1.10:554/stream1"}'
 ```
 
@@ -252,7 +267,7 @@ Dahua: `/cam/realmonitor?channel=1&subtype=0`). Пароль камеры API н
 Зарегистрировать человека — одно фото, на нём ровно одно лицо анфас:
 
 ```bash
-curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8000/persons
+curl -b cookies.txt -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8000/persons
 ```
 
 Ответ 201 — человек добавлен. Ответ 422 объясняет, что не так с фото: нет лица,
@@ -263,7 +278,7 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 Воркер подхватывает новых людей сразу, без перезапуска. В live view над рамкой
 появится `Alice 0.78` (имя и сходство) или `Unknown`.
 
-Удалить человека вместе с его векторами: `curl -X DELETE http://127.0.0.1:8000/persons/1`.
+Удалить человека вместе с его векторами: `curl -b cookies.txt -X DELETE http://127.0.0.1:8000/persons/1`.
 
 Проверить без камеры: `python -m scripts.download_models --samples` скачивает
 портреты (public domain), например `data/samples/biden_1.jpg` — регистрируй его,
@@ -271,11 +286,13 @@ curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8
 
 ### Шаг 5. Что смотреть
 
-Главное — **дашборд: http://127.0.0.1:8000/ui/**. В нём есть обзор, камеры, live view,
+Главное — **дашборд: http://127.0.0.1:8000/ui/** (вход логином и паролем из шага 1).
+В нём есть обзор, камеры, live view,
 люди с регистрацией по фото, события с фильтрами, аналитика с графиками и настройки.
 Подробнее — [docs/dashboard.md](docs/dashboard.md).
 
-То же самое напрямую через API:
+То же самое напрямую через API. В браузере ссылки работают после входа в дашборд:
+cookie сеанса общая.
 
 | Что | Где |
 |---|---|
@@ -346,6 +363,10 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | `DASHBOARD_DIR` | `frontend/dist` | собранный дашборд, который API отдаёт на `/ui` |
 | `CORS_ORIGINS` | `[]` | JSON-список origin, только если дашборд на другом домене |
 | `ANALYTICS_TIMEZONE` | `UTC` | часовой пояс для графиков по часам и пиковых часов, например `Asia/Tashkent` |
+| `AUTH_SESSION_HOURS` | `12` | срок жизни сеанса входа |
+| `AUTH_COOKIE_SECURE` | `false` | `true`, если API за HTTPS |
+| `AUTH_MAX_FAILED_LOGINS` / `AUTH_LOCKOUT_SECONDS` | `5` / `300` | блокировка после неудачных входов |
+| `PASSWORD_MIN_LENGTH` | `10` | минимальная длина пароля |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
 
 `FACE_MATCH_THRESHOLD=0.40` откалиброван на тестовых портретах: один человек — 0.72–0.78,
@@ -356,7 +377,12 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/health` | Состояние компонентов |
+| GET | `/health` | Состояние компонентов (без входа) |
+| POST | `/auth/login` | Вход `{"username", "password"}`: cookie сеанса + `access_token` |
+| POST | `/auth/logout`, `/auth/password` | Выход; смена своего пароля |
+| GET | `/auth/me` | Кто я |
+| GET/POST/PATCH/DELETE | `/users` | Пользователи (только admin) |
+| GET | `/audit` | Журнал аудита (только admin) |
 | GET | `/cameras` | Список камер |
 | POST | `/cameras` | Добавить камеру `{"name", "stream_url", "location_id?", "enabled?"}` |
 | GET | `/cameras/{id}` | Камера |
@@ -382,6 +408,9 @@ python -m scripts.benchmark_detector --model models/yolox_tiny.onnx --faces
 | GET | `/analytics/dwell-time` | Время пребывания: среднее, медиана, мин, макс |
 | GET | `/analytics/people-flow` | Входы/выходы по часам + пиковые часы (`?tz=`) |
 | GET | `/analytics/repeat-visitors` | Узнанные люди с несколькими визитами |
+
+Все эндпоинты, кроме `/health` и `/auth/login`, требуют входа. Роль `user` только
+читает (GET), изменения доступны только `admin` ([docs/security.md](docs/security.md)).
 
 `stream_url` никогда не возвращается: API отдаёт `stream_url_masked`
 (`rtsp://***:***@host/...`) и `source_kind` (`usb` / `network` / `file`).
@@ -422,7 +451,7 @@ python -m scripts.check_camera --source "rtsp://user:pass@192.168.1.10:554/strea
 Добавить камеру в систему:
 
 ```bash
-curl -X POST localhost:8000/cameras -H 'content-type: application/json' \
+curl -b cookies.txt -X POST localhost:8000/cameras -H 'content-type: application/json' \
      -d '{"name": "Webcam", "stream_url": "0"}'
 ```
 

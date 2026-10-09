@@ -126,6 +126,16 @@ class Settings(BaseSettings):
     # Not needed for /ui or the Vite dev server (it proxies the API).
     cors_origins: list[str] = Field(default_factory=list)
 
+    # --- Security -----------------------------------------------------------
+    # Lifetime of a login session (cookie and server-side record).
+    auth_session_hours: float = Field(default=12.0, gt=0)
+    # Send the session cookie over HTTPS only. Enable when the API is behind TLS.
+    auth_cookie_secure: bool = False
+    # Failed logins per username (and per client IP) before a temporary lockout.
+    auth_max_failed_logins: int = Field(default=5, ge=1)
+    auth_lockout_seconds: float = Field(default=300.0, gt=0)
+    password_min_length: int = Field(default=10, ge=8)
+
     # --- Live view (served by the worker, proxied by the API) ------------
     live_view_enabled: bool = True
     live_view_host: str = "127.0.0.1"

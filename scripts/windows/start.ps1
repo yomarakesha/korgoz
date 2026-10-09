@@ -74,16 +74,11 @@ if ($Camera -ne 'none') {
     if ($Camera -eq 'demo' -and -not (Test-Path (Join-Path $Root 'data\samples\vtest.avi'))) {
         Fail 'Sample video missing: run  .venv\Scripts\python -m scripts.download_models --samples'
     }
-    $existing = @(Invoke-RestMethod 'http://127.0.0.1:8000/cameras') | Where-Object { $_.name -eq $cameraName }
-    if ($existing) {
-        $cameraId = $existing[0].id
-        Write-Ok "using existing camera #$cameraId ($cameraName)"
-    } else {
-        $body = @{ name = $cameraName; stream_url = $source } | ConvertTo-Json
-        $created = Invoke-RestMethod 'http://127.0.0.1:8000/cameras' -Method Post -ContentType 'application/json' -Body $body
-        $cameraId = $created.id
-        Write-Ok "camera #$cameraId added ($cameraName, $($created.source_kind))"
-    }
+    # Written straight to the database: the API needs a login, this script has none.
+    $output = & $VenvPy -m scripts.add_camera --name $cameraName --source $source
+    if ($LASTEXITCODE -ne 0) { Fail 'Could not add the camera; see the error above.' }
+    $cameraId = [int]($output | Select-Object -Last 1)
+    Write-Ok "camera #$cameraId ($cameraName)"
 }
 
 # ---------------------------------------------------------------- worker
@@ -94,7 +89,8 @@ Save-Pid 'worker' $worker.Id
 Write-Ok "worker started (mode: $Mode)"
 
 if ($cameraId) {
-    $snapshot = "http://127.0.0.1:8000/cameras/$cameraId/snapshot"
+    # The worker's own frame server (localhost only, no login), not the API.
+    $snapshot = "http://127.0.0.1:8001/cameras/$cameraId/snapshot.jpg"
     if (Wait-Http $snapshot 45) {
         Write-Ok 'frames are coming in'
     } else {
@@ -105,10 +101,10 @@ if ($cameraId) {
 Write-Host ''
 Write-Host 'KorGoz is running.' -ForegroundColor Green
 if (Test-Path (Join-Path $Root 'frontend\dist\index.html')) { Write-Host '  Dashboard : http://127.0.0.1:8000/ui/' }
-if ($cameraId) { Write-Host "  Live view : http://127.0.0.1:8000/cameras/$cameraId/stream" }
+if ($cameraId) { Write-Host '  Live view : http://127.0.0.1:8000/ui/live (log in first)' }
 Write-Host '  API docs  : http://127.0.0.1:8000/docs'
 Write-Host '  Health    : http://127.0.0.1:8000/health'
 Write-Host '  Tracks    : http://127.0.0.1:8000/tracks?active=true'
 Write-Host '  Stop      : scripts\windows\stop.bat'
 
-if ($cameraId -and -not $NoBrowser) { Start-Process "http://127.0.0.1:8000/cameras/$cameraId/stream" }
+if (-not $NoBrowser) { Start-Process 'http://127.0.0.1:8000/ui/live' }

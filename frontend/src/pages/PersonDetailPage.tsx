@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { ErrorNote, Loading } from "../components/Notice";
 import { EVENT_LABELS, formatDate, formatDateTime, formatScore } from "../format";
 import { useApi } from "../useApi";
@@ -9,6 +10,7 @@ import { useApi } from "../useApi";
 export function PersonDetailPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const [deleteError, setDeleteError] = useState<Error>();
   const state = useApi(async () => {
     const [person, timeline] = await Promise.all([api.person(id), api.timeline(id)]);
@@ -48,9 +50,11 @@ export function PersonDetailPage() {
               </>
             )}
           </dl>
-          <button type="button" className="danger" onClick={() => void remove()}>
-            Удалить человека
-          </button>
+          {isAdmin && (
+            <button type="button" className="danger" onClick={() => void remove()}>
+              Удалить человека
+            </button>
+          )}
 
           <h2>Timeline</h2>
           {data.timeline.length === 0 ? (

@@ -110,6 +110,15 @@ cd /opt/korgoz/app
 sudo -u korgoz bash -c 'set -a; source /etc/korgoz/korgoz.env; set +a; .venv/bin/alembic upgrade head'
 ```
 
+Первый администратор дашборда (пароль спросит дважды):
+
+```bash
+sudo -u korgoz bash -c 'set -a; source /etc/korgoz/korgoz.env; set +a; .venv/bin/python -m scripts.create_user admin --role admin'
+```
+
+Если API будет доступен из сети, поставь перед ним HTTPS-прокси и задай
+`AUTH_COOKIE_SECURE=true` ([security.md](security.md)).
+
 ## 7b. Дашборд
 
 Собирается один раз (и после каждого обновления кода) на машине с Node.js 22 LTS:

@@ -3,14 +3,40 @@
 REST API на FastAPI. Запуск: `uvicorn app.main:app` (по умолчанию http://127.0.0.1:8000).
 Интерактивная документация со всеми схемами: `/docs` (Swagger UI).
 
-> **Авторизации пока нет** (Phase 9). Не открывай API наружу: по умолчанию он слушает
-> только `127.0.0.1`.
+> **Нужен вход** (Phase 9, подробно — [security.md](security.md)). Без сеанса все
+> эндпоинты, кроме `GET /health` и `POST /auth/login`, отвечают **401**. Роль `user`
+> может только читать (GET); POST/PATCH/DELETE, `/users` и `/audit` — только `admin`
+> (иначе **403**). Сеанс — cookie `korgoz_session` (ставится при входе) или заголовок
+> `Authorization: Bearer <access_token>`.
 
 Общие правила:
 - время — ISO 8601 с часовым поясом, хранится в UTC (`2026-01-01T09:00:00Z`);
 - списки отдаются **новые сверху**, пагинация `limit` (1–1000, по умолчанию 100) и `offset`;
-- ошибки — JSON `{"detail": "..."}`: 404 нет объекта, 409 конфликт, 422 неверные данные,
-  503 недоступна БД или Qdrant.
+- ошибки — JSON `{"detail": "..."}`: 401 нужен вход, 403 нужна роль admin, 404 нет объекта,
+  409 конфликт, 422 неверные данные, 429 много неудачных входов, 503 недоступна БД или Qdrant.
+
+## Вход и пользователи
+
+| Метод | Путь | Кто | Описание |
+|---|---|---|---|
+| POST | `/auth/login` | все | `{"username", "password"}` → `{"user", "access_token", "token_type", "expires_at"}` + cookie. 401 неверные данные, 429 слишком много попыток (`Retry-After`) |
+| POST | `/auth/logout` | вошедший | завершить текущий сеанс, 204 |
+| GET | `/auth/me` | вошедший | текущий пользователь |
+| POST | `/auth/password` | вошедший | `{"current_password", "new_password"}` → 204; остальные сеансы завершаются. 400 неверный текущий пароль, 422 слабый новый |
+| GET | `/users` | admin | список пользователей |
+| POST | `/users` | admin | `{"username", "password", "role": "admin"\|"user"}` → 201; 409 логин занят |
+| PATCH | `/users/{id}` | admin | `{"role"?, "is_active"?, "password"?}`; 409 — нельзя менять свою роль/статус |
+| DELETE | `/users/{id}` | admin | 204; 409 — нельзя удалить себя |
+| GET | `/audit` | admin | журнал, новые сверху. Фильтры: `user_id`, `action` (можно несколько), `since`, `until`, `limit`, `offset` |
+
+Пользователь (`UserRead`): `id`, `username`, `role`, `is_active`, `last_login_at`,
+`created_at`. Хеш пароля API не возвращает никогда.
+
+```bash
+curl -c cookies.txt -X POST localhost:8000/auth/login -H 'content-type: application/json' \
+     -d '{"username": "admin", "password": "..."}'
+curl -b cookies.txt localhost:8000/cameras
+```
 
 ## Health
 
@@ -68,7 +94,7 @@ REST API на FastAPI. Запуск: `uvicorn app.main:app` (по умолчан
 | 503 | Qdrant недоступен (человек не создаётся) или нет файлов моделей |
 
 ```bash
-curl -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8000/persons
+curl -b cookies.txt -F name="Alice" -F external_id=emp-1 -F photo=@alice.jpg http://127.0.0.1:8000/persons
 ```
 
 ## События

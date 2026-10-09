@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { App } from "../App";
-import { CAMERAS, LOCATIONS, PERSONS, SETTINGS, mockApi, renderAt } from "../testing";
+import { ADMIN, CAMERAS, LOCATIONS, PERSONS, SETTINGS, VIEWER, mockApi, renderAt } from "../testing";
 
 const EVENT = {
   id: 1,
@@ -17,6 +17,7 @@ const EVENT = {
 
 function baseRoutes() {
   return {
+    "/auth/me": ADMIN as unknown,
     "/settings": SETTINGS,
     "/health": { status: "ok", database: "ok", qdrant: "ok", ai: "ok", cameras: 1 },
     "/cameras": CAMERAS,
@@ -161,5 +162,77 @@ describe("pages", () => {
       expect(patch?.url.pathname).toBe("/cameras/1");
       expect(patch?.init?.body).toBe(JSON.stringify({ location_id: null }));
     });
+  });
+
+  it("read-only user sees data but no admin controls", async () => {
+    mockApi({ ...baseRoutes(), "/auth/me": VIEWER });
+    renderAt(<App />, "/cameras");
+    expect(await screen.findByLabelText("Локация камеры entrance")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Удалить" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Добавить камеру")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Пользователи" })).not.toBeInTheDocument();
+    expect(screen.getByText("(просмотр)")).toBeInTheDocument();
+  });
+
+  it("read-only user cannot open admin pages", async () => {
+    mockApi({ ...baseRoutes(), "/auth/me": VIEWER });
+    renderAt(<App />, "/users");
+    expect(await screen.findByText("Раздел доступен только администратору.")).toBeInTheDocument();
+  });
+
+  it("users page creates a user and blocks self-demotion in the UI", async () => {
+    const calls = mockApi({
+      ...baseRoutes(),
+      "/users": (_url: URL, init?: RequestInit) =>
+        init?.method === "POST" ? { ...VIEWER, id: 3, username: "bob" } : [ADMIN, VIEWER],
+    });
+    renderAt(<App />, "/users");
+    expect(await screen.findByLabelText("Роль admin")).toBeDisabled();
+    expect(screen.getByLabelText("Роль viewer")).not.toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Логин"), { target: { value: "Bob" } });
+    fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "bob-password-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+    expect(await screen.findByText("Пользователь «bob» создан.")).toBeInTheDocument();
+    const post = calls.find((c) => c.init?.method === "POST");
+    expect(JSON.parse(String(post?.init?.body))).toEqual({ username: "Bob", password: "bob-password-1", role: "user" });
+  });
+
+  it("audit page lists entries and filters by action", async () => {
+    const calls = mockApi({
+      ...baseRoutes(),
+      "/users": [ADMIN],
+      "/audit": [
+        {
+          id: 1,
+          timestamp: "2026-10-09T09:00:00Z",
+          user_id: 1,
+          username: "admin",
+          action: "CAMERA_UPDATED",
+          target_type: "camera",
+          target_id: 1,
+          ip_address: "127.0.0.1",
+          details: { enabled: false },
+        },
+      ],
+    });
+    renderAt(<App />, "/audit");
+    expect(await screen.findByText("camera #1")).toBeInTheDocument();
+    expect(screen.getByText("enabled: false")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Действие"), { target: { value: "LOGIN_FAILED" } });
+    await waitFor(() => expect(calls.some((c) => c.url.search.includes("action=LOGIN_FAILED"))).toBe(true));
+  });
+
+  it("settings page changes the own password", async () => {
+    const calls = mockApi({ ...baseRoutes(), "/auth/password": () => new Response(null, { status: 204 }) });
+    renderAt(<App />, "/settings");
+    fireEvent.change(await screen.findByLabelText("Текущий пароль"), { target: { value: "old-password-1" } });
+    fireEvent.change(screen.getByLabelText("Новый пароль"), { target: { value: "new-password-1" } });
+    fireEvent.change(screen.getByLabelText("Повторите новый пароль"), { target: { value: "typo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сменить" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("не совпадают");
+    fireEvent.change(screen.getByLabelText("Повторите новый пароль"), { target: { value: "new-password-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сменить" }));
+    expect(await screen.findByText("Пароль изменён.")).toBeInTheDocument();
+    expect(calls.some((c) => c.url.pathname === "/auth/password")).toBe(true);
   });
 });

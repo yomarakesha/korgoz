@@ -77,3 +77,13 @@ export const PERSONS = [
     updated_at: "2026-10-01T10:00:00Z",
   },
 ];
+
+export const ADMIN = {
+  id: 1,
+  username: "admin",
+  role: "admin",
+  is_active: true,
+  last_login_at: "2026-10-09T09:00:00Z",
+  created_at: "2026-10-01T10:00:00Z",
+} as const;
+export const VIEWER = { ...ADMIN, id: 2, username: "viewer", role: "user" } as const;

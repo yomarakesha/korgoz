@@ -1,6 +1,8 @@
 // Thin typed client for the KörGöz API. Same origin: the API serves the dashboard
 // at /ui, and the Vite dev server proxies these paths to uvicorn.
 import type {
+  AuditAction,
+  AuditEntry,
   Camera,
   CameraStatus,
   DwellTime,
@@ -15,6 +17,8 @@ import type {
   PublicSettings,
   RepeatVisitor,
   TimelineEntry,
+  User,
+  UserRole,
 } from "./types";
 
 export class ApiError extends Error {
@@ -56,10 +60,17 @@ function errorMessage(body: unknown, status: number): string {
   return `HTTP ${status}`;
 }
 
+/** Fired on any 401 except a failed login: the session is gone, show the login page. */
+export const UNAUTHORIZED_EVENT = "korgoz:unauthorized";
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Same origin: the browser sends the HttpOnly session cookie by itself.
   const response = await fetch(path, init);
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
+    if (response.status === 401 && path !== "/auth/login") {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(response.status, errorMessage(body, response.status));
   }
   if (response.status === 204) return undefined as T;
@@ -91,7 +102,29 @@ export interface AnalyticsQuery {
 
 const q = (params: object) => queryString(params as Record<string, QueryValue>);
 
+export interface AuditQuery {
+  user_id?: number | null;
+  action?: readonly AuditAction[];
+  limit?: number;
+  offset?: number;
+}
+
 export const api = {
+  login: (username: string, password: string) =>
+    request<{ user: User }>("/auth/login", json("POST", { username, password })),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  me: () => request<User>("/auth/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request<void>("/auth/password", json("POST", { current_password, new_password })),
+
+  users: () => request<User[]>("/users"),
+  createUser: (body: { username: string; password: string; role: UserRole }) =>
+    request<User>("/users", json("POST", body)),
+  updateUser: (id: number, body: { role?: UserRole; is_active?: boolean; password?: string }) =>
+    request<User>(`/users/${id}`, json("PATCH", body)),
+  deleteUser: (id: number) => request<void>(`/users/${id}`, { method: "DELETE" }),
+  audit: (query: AuditQuery) => request<AuditEntry[]>(`/audit${q(query)}`),
+
   health: () => request<Health>("/health"),
   settings: () => request<PublicSettings>("/settings"),
 

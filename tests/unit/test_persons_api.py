@@ -15,6 +15,7 @@ from app.database.session import get_db, get_engine
 from app.main import create_app
 from app.recognition.detector import FaceDetection
 from app.recognition.service import FaceRecognitionService
+from tests.conftest import ADMIN_PASSWORD, add_user, login
 from tests.unit.recognition.fakes import (
     InMemoryVectorStore,
     make_face,
@@ -66,6 +67,8 @@ def env(sqlite_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]
         app.dependency_overrides[get_db] = _db
         app.dependency_overrides[get_recognition_service] = lambda: holder.service
         app.dependency_overrides[get_vector_store] = lambda: store
+        add_user(sqlite_engine, "admin", ADMIN_PASSWORD, role="admin")
+        login(client, "admin", ADMIN_PASSWORD)
         yield holder
 
 
@@ -143,6 +146,20 @@ def test_list_get_delete(env: Env) -> None:
     assert [pid for pid, _ in env.store.points.values()] == [bob]
     assert env.count(FaceEmbedding) == 1
     assert env.client.delete("/persons/999").status_code == 404
+
+
+def test_registration_and_deletion_are_audited_by_id_only(env: Env) -> None:
+    env.store.down = True
+    env.register("Alice")  # failed: no audit entry
+    env.store.down = False
+    alice = env.register("Alice").json()["id"]
+    env.client.delete(f"/persons/{alice}")
+    entries = env.client.get("/audit", params={"action": ["PERSON_REGISTERED", "PERSON_DELETED"]})
+    assert [(e["action"], e["target_id"]) for e in entries.json()] == [
+        ("PERSON_DELETED", alice),
+        ("PERSON_REGISTERED", alice),
+    ]
+    assert "Alice" not in entries.text
 
 
 def test_delete_keeps_person_when_qdrant_is_down(env: Env) -> None:
