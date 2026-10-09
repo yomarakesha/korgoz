@@ -124,25 +124,51 @@ def test_failed_logins_look_the_same_and_are_audited(
     assert password not in str(entry.details)
 
 
-def test_brute_force_is_locked_out(
+def test_brute_force_is_locked_out_only_from_the_attackers_address(
     anonymous_client: Any, sqlite_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("AUTH_MAX_FAILED_LOGINS", "3")
-    get_settings.cache_clear()
     from fastapi.testclient import TestClient
 
-    from app.database.session import get_db
-
-    app = create_app()  # the limiter is built from the settings at startup
-    app.dependency_overrides = anonymous_client.app.dependency_overrides
-    assert get_db in app.dependency_overrides
-    client = TestClient(app)
+    monkeypatch.setenv("AUTH_MAX_FAILED_LOGINS", "3")
+    get_settings.cache_clear()
+    app = anonymous_client.app
+    attacker = TestClient(app, client=("10.0.0.66", 4000))
+    owner = TestClient(app, client=("10.0.0.1", 4000))
     add_user(sqlite_engine, "admin", ADMIN_PASSWORD, role="admin")
     bad = {"username": "admin", "password": "guess"}
-    assert [client.post("/auth/login", json=bad).status_code for _ in range(3)] == [401] * 3
-    locked = client.post("/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD})
+    good = {"username": "admin", "password": ADMIN_PASSWORD}
+    assert [attacker.post("/auth/login", json=bad).status_code for _ in range(3)] == [401] * 3
+    locked = attacker.post("/auth/login", json=good)
     assert locked.status_code == 429
     assert int(locked.headers["retry-after"]) > 0
+    # The real admin, from another address, is not locked out.
+    assert owner.post("/auth/login", json=good).status_code == 200
+
+
+def test_one_address_cannot_spray_many_usernames(
+    anonymous_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTH_MAX_FAILED_LOGINS", "2")
+    get_settings.cache_clear()
+    statuses = [
+        anonymous_client.post(
+            "/auth/login", json={"username": f"u{i}", "password": "x"}
+        ).status_code
+        for i in range(9)
+    ]
+    assert statuses == [401] * 8 + [429]  # 2 per username, 2 * 4 per address
+
+
+def test_current_password_guessing_is_limited(
+    anonymous_client: Any, sqlite_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTH_MAX_FAILED_LOGINS", "2")
+    get_settings.cache_clear()
+    add_user(sqlite_engine, "bob", "bob-password-1")
+    login(anonymous_client, "bob", "bob-password-1")
+    guess = {"current_password": "guess", "new_password": "bob-password-2"}
+    codes = [anonymous_client.post("/auth/password", json=guess).status_code for _ in range(3)]
+    assert codes == [400, 400, 429]
 
 
 def test_logout_revokes_the_session(anonymous_client: Any, sqlite_engine: Engine) -> None:

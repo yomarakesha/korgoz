@@ -131,7 +131,8 @@ class Settings(BaseSettings):
     auth_session_hours: float = Field(default=12.0, gt=0)
     # Send the session cookie over HTTPS only. Enable when the API is behind TLS.
     auth_cookie_secure: bool = False
-    # Failed logins per username (and per client IP) before a temporary lockout.
+    # Login attempts per username + client IP (4x per IP) and own-password checks per user
+    # within AUTH_LOCKOUT_SECONDS; then 429 until the window passes.
     auth_max_failed_logins: int = Field(default=5, ge=1)
     auth_lockout_seconds: float = Field(default=300.0, gt=0)
     password_min_length: int = Field(default=10, ge=8)

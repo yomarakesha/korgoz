@@ -65,9 +65,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     register_error_handlers(app)
-    app.state.login_limiter = LoginLimiter(
-        settings.auth_max_failed_logins, settings.auth_lockout_seconds
-    )
+    app.state.login_limiter = LoginLimiter(settings.auth_lockout_seconds)
     # Public: health checks (systemd, monitoring) and login.
     app.include_router(health.router)
     app.include_router(auth.router)
