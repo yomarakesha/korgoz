@@ -71,7 +71,7 @@ def check_ai(settings: Settings) -> ComponentStatus:
     """AI models live in the worker process; ask its status endpoint."""
     url = f"http://{settings.live_view_host}:{settings.live_view_port}/status"
     try:
-        response = httpx.get(url, timeout=settings.health_check_timeout_seconds)
+        response = httpx.get(url, timeout=settings.health_check_timeout_seconds, trust_env=False)
         response.raise_for_status()
         ai_status = response.json()["ai"]["status"]
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:

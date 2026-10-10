@@ -39,7 +39,7 @@ async def camera_snapshot(camera_id: int, db: DbSession, settings: SettingsDep) 
     """Latest annotated frame as JPEG."""
     await _ensure_camera(db, camera_id)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
             upstream = await client.get(_worker_url(settings, f"/cameras/{camera_id}/snapshot.jpg"))
     except httpx.HTTPError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _WORKER_DOWN) from exc
@@ -56,7 +56,7 @@ async def camera_snapshot(camera_id: int, db: DbSession, settings: SettingsDep) 
 async def camera_stream(camera_id: int, db: DbSession, settings: SettingsDep) -> StreamingResponse:
     """MJPEG stream with bounding boxes; usable directly as `<img src=...>`."""
     await _ensure_camera(db, camera_id)
-    client = httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=None))
+    client = httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=None), trust_env=False)
     request = client.build_request(
         "GET", _worker_url(settings, f"/cameras/{camera_id}/stream.mjpg")
     )
