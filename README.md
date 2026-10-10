@@ -35,7 +35,7 @@ KörGöz — локальная (on-premise) платформа видеоана
 | 7 | Analytics | ✅ готово |
 | 8 | Dashboard (React + TS + Vite) | ✅ готово |
 | 9 | Security: auth, RBAC, audit | ✅ готово |
-| 10 | Optimization & benchmarks | — |
+| 10 | Optimization & benchmarks | ✅ готово ([docs/benchmarks.md](docs/benchmarks.md)) |
 
 ## Архитектура
 
@@ -72,6 +72,7 @@ tests/
 scripts/check_camera.py  проверка видеоисточника без БД
 scripts/download_models.py   загрузка моделей с проверкой SHA-256
 scripts/benchmark_detector.py  замер скорости детекции на этой машине
+scripts/benchmark_pipeline.py  сквозной замер конвейера на 1..N камерах (FPS, задержка, CPU, RAM)
 scripts/systemd/         unit-файлы systemd (korgoz-api, korgoz-worker)
 scripts/windows/         setup/start/stop/test для Windows (.bat + PowerShell)
 frontend/                дашборд: React + TypeScript + Vite (docs/dashboard.md)

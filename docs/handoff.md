@@ -8,7 +8,8 @@
 4. [architecture.md](architecture.md), [ai.md](ai.md), [deployment.md](deployment.md),
    [security.md](security.md) — детали.
 
-Состояние на момент передачи: **фазы 1–9 из 10 готовы**, всё протестировано и запушено.
+Состояние на момент передачи: **все 10 фаз готовы**, всё протестировано и запушено.
+Осталось закрыть техдолг из раздела 5.
 
 ---
 
@@ -25,6 +26,7 @@
 | 7 Analytics | occupancy, people count, dwell time, people flow + peak hours (локальный пояс), повторные визиты | `:8000/analytics/people-flow` |
 | 8 Dashboard | React + TS + Vite, 8 страниц (обзор, камеры, live view, люди, человек, события, аналитика, настройки), отдаётся API на `/ui/` | http://127.0.0.1:8000/ui/ |
 | 9 Security | Вход (серверные сеансы, HttpOnly-cookie или Bearer), argon2id, роли admin/user, журнал аудита, защита от подбора, страницы «Пользователи» и «Журнал аудита» | `python -m scripts.create_user admin --role admin`, затем `/ui/` |
+| 10 Optimization | Сквозной бенчмарк конвейера на 1..N камерах (FPS, задержка, потери, CPU, RAM), отчёт и рекомендуемые настройки | `python -m scripts.benchmark_pipeline`, [benchmarks.md](benchmarks.md) |
 
 Замеры на Intel Core Ultra 5 125U, только CPU (подробно в [ai.md](ai.md)):
 - YOLOX-s — ~76 мс на кадр;
@@ -32,10 +34,12 @@
 - YuNet — 13 мс;
 - SFace + поиск в Qdrant — ~9 мс на лицо (и только для новых треков);
 - трекер — 0.6 мс на обновление;
-- камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`.
+- камера 10 FPS обрабатывается полностью при `DETECTION_INTERVAL=3`;
+- YOLOX-s тянет 1–2 камеры, YOLOX-tiny с `ONNX_NUM_THREADS=2` — 4 камеры без потерь
+  (~2.5 ядра, задержка p95 ~0.15 с) — [benchmarks.md](benchmarks.md).
 
 Проверки качества:
-- `pytest` — 241 passed (243, если запущен Qdrant);
+- `pytest` — 252 passed (с запущенным Qdrant);
 - `cd frontend && npm test` — 30 passed, `npm run typecheck` — чисто;
 - `pytest -m ai` — 6 passed;
 - `pytest -m integration` — 9 passed (PostgreSQL + Qdrant);
@@ -214,10 +218,14 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - Дашборд: страница входа, «Пользователи», «Журнал аудита», смена пароля в «Настройках»;
   для роли user кнопки изменения скрыты.
 
-### Phase 10 — Optimization
+### Phase 10 — Optimization ✅ (готово)
 
-- Есть `scripts/benchmark_detector.py`. Нужно добавить замеры сквозной задержки
-  (время кадра → время события), CPU и RAM на камеру, и прогон с 2–4 камерами.
+- `scripts/benchmark_pipeline.py` собирает тот же конвейер, что и воркер (без записи в БД),
+  на 1..N камерах из одного источника и меряет FPS, потерянные кадры, задержку
+  «захват → последний обработчик» (p50/p95), время детекции, CPU и RAM процесса.
+- Результаты и рекомендуемые настройки — [benchmarks.md](benchmarks.md). Главное:
+  `ONNX_NUM_THREADS=0` занимает все ядра; YOLOX-s на ноутбучном CPU — 1–2 камеры.
+- Не измерено: GPU, реальные RTSP-камеры, суточный прогон (утечки памяти).
 
 ---
 
@@ -229,7 +237,9 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | После `kill -9` воркера статус камеры остаётся `online` | `camera/status_store.py` | Колонка `last_heartbeat_at`; API считает камеру offline, если heartbeat старше X с |
 | Сопоставление в трекере жадное, без венгерского алгоритма | `tracking/tracker.py` | При плотной толпе заменить на `scipy.optimize.linear_sum_assignment` |
 | Номер трека начинается с 1 после перезапуска воркера | by design | Глобальный id — `tracks.id` |
-| Время детекции YOLOX-tiny скачет (21–40 мс) | ноутбучный CPU | Длинный бенчмарк от сети (Phase 10) |
+| Время детекции YOLOX-tiny скачет (21–40 мс в `benchmark_detector`) | ноутбучный CPU, троттлинг | В сквозном замере стабильно 46–98 мс в зависимости от числа камер ([benchmarks.md](benchmarks.md)) |
+| Одна модель детекции на все камеры: при 4 камерах с YOLOX-s теряется ~40% кадров | `app/worker.py` | YOLOX-tiny или отдельная `InferenceSession` на камеру (замерить) |
+| Суточный прогон не делался | — | Оставить воркер на ночь, сравнить RSS |
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
 | Нет индексов `tracks(started_at)` и `sessions(ended_at)` для аналитики | `database/models.py` | Добавить миграцией, когда данных станет много (замерить `EXPLAIN ANALYZE`) |
 | Разрыв трека (перекрытие дольше `TRACK_MAX_LOST_SECONDS`) = два визита в `people_count` | `analytics/service.py` | Склеивать визиты одного `person_id` или с паузой < N с |
@@ -254,6 +264,10 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - **Нет роли PostgreSQL** → `role "<user>" does not exist`. Создать её — README, шаг 1.
   Для тестов без sudo можно поднять временный кластер:
   `initdb` + `pg_ctl` из `/usr/lib/postgresql/<ver>/bin`, только TCP.
+- **Системный прокси (`HTTP_PROXY`, VPN-клиент).** httpx не понимает CIDR в `NO_PROXY`
+  (`127.0.0.0/8`). API ходит к воркеру с `trust_env=False`, а тесты, которые сами
+  вызывают localhost через httpx, при включённом прокси падают с 503. Запускай их так:
+  `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY pytest`.
 - **Нестабильная сеть.** GitHub был доступен только через VPN или прокси. Модели
   скачиваются один раз, `download_models.py` проверяет SHA-256. Если сети нет совсем,
   скопируй папку `models/` с другой машины.
