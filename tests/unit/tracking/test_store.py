@@ -102,3 +102,14 @@ def test_database_outage_does_not_raise() -> None:
     store(FrameAnalysis(frame=frame, tracks=[tracked(1, T0)], tracks_started=[tracked(1, T0)]))
     store.end_tracks(1, [tracked(1, T0)])
     store.stop()
+
+
+def test_tracks_of_a_deleted_camera_are_skipped(sqlite_engine: Engine) -> None:
+    store = TrackStore(sqlite_engine, flush_interval_seconds=0.05)
+    store.start([1])  # camera 1 is not in the database (deleted via the API)
+    frame = make_frame(0)
+    store(FrameAnalysis(frame=frame, tracks=[tracked(7, T0)], tracks_started=[tracked(7, T0)]))
+    store(FrameAnalysis(frame=frame, tracks_ended=[tracked(7, T0 + timedelta(seconds=2))]))
+    store.stop()
+    assert rows(sqlite_engine) == []
+    assert sessions(sqlite_engine) == []

@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.camera.status_store import effective_status
 from app.camera.stream import detect_source_kind
 from app.camera.types import CameraStatus, SourceKind
 from app.core.logging import redact
@@ -31,20 +32,26 @@ class CameraRead(BaseModel):
     name: str
     location_id: int | None
     enabled: bool
+    # ONLINE is reported only while the worker's heartbeat is fresh.
     status: CameraStatus
+    last_seen_at: datetime | None
     source_kind: SourceKind
     stream_url_masked: str
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, camera: Camera) -> "CameraRead":
+    def from_model(cls, camera: Camera, stale_after_seconds: float) -> "CameraRead":
+        status = effective_status(
+            camera.status, camera.last_seen_at, datetime.now(UTC), stale_after_seconds
+        )
         return cls(
             id=camera.id,
             name=camera.name,
             location_id=camera.location_id,
             enabled=camera.enabled,
-            status=camera.status,
+            status=status,
+            last_seen_at=camera.last_seen_at,
             source_kind=detect_source_kind(camera.stream_url),
             stream_url_masked=redact(camera.stream_url),
             created_at=camera.created_at,

@@ -17,6 +17,8 @@ LIVE_VIEW_HOST:LIVE_VIEW_PORT for the API to proxy.
 import logging
 import signal
 import threading
+import time
+from collections.abc import Callable
 from types import FrameType
 from typing import Any
 
@@ -44,10 +46,13 @@ from app.tracking.store import TrackStore
 logger = logging.getLogger("app.worker")
 
 STATS_INTERVAL_SECONDS = 10.0
+TICK_SECONDS = 1.0
 
 
-def load_camera_configs(settings: Settings) -> list[CameraConfig]:
+def load_camera_configs(settings: Settings) -> list[CameraConfig] | None:
+    """Enabled cameras plus the CAMERA_URL camera; None if the database is unreachable."""
     configs: dict[int, CameraConfig] = {}
+    database_ok = True
     try:
         with Session(get_engine()) as session:
             for camera in session.scalars(select(Camera).where(Camera.enabled.is_(True))):
@@ -60,6 +65,7 @@ def load_camera_configs(settings: Settings) -> list[CameraConfig]:
                 )
     except Exception as exc:
         logger.error("Cannot load cameras from the database: %s", type(exc).__name__)
+        database_ok = False
 
     if settings.camera_url is not None:
         configs[settings.camera_id] = CameraConfig(
@@ -69,6 +75,8 @@ def load_camera_configs(settings: Settings) -> list[CameraConfig]:
             max_fps=settings.camera_max_fps,
             loop_video=settings.camera_loop_video,
         )
+    elif not database_ok:
+        return None
     return list(configs.values())
 
 
@@ -150,20 +158,14 @@ class WorkerRuntime:
         )
         if settings.live_view_enabled:
             sinks.append(self.hub)
+        self.sinks = sinks
 
+        # Cameras are added and removed while the live view thread reads `status()`.
+        self._lock = threading.Lock()
+        self._configs: dict[int, CameraConfig] = {}
         self.processors: dict[int, FrameProcessor] = {}
         for config in configs:
-            capture = self.manager.add(config)
-            self.processors[config.camera_id] = FrameProcessor(
-                config.camera_id,
-                capture.buffer,
-                detector=ai.person_detector,
-                face_detector=ai.face_detector,
-                detection_interval=settings.detection_interval,
-                sinks=sinks,
-                tracker=build_tracker(settings),
-                min_person_confidence=settings.person_confidence_threshold,
-            )
+            self._add(config)
         self.server: LiveViewServer | None = None
         if settings.live_view_enabled:
             try:
@@ -178,10 +180,79 @@ class WorkerRuntime:
                     exc.strerror,
                 )
 
+    def _add(self, config: CameraConfig) -> FrameProcessor:
+        capture = self.manager.add(config)
+        processor = FrameProcessor(
+            config.camera_id,
+            capture.buffer,
+            detector=self.ai.person_detector,
+            face_detector=self.ai.face_detector,
+            detection_interval=self.settings.detection_interval,
+            sinks=self.sinks,
+            tracker=build_tracker(self.settings),
+            min_person_confidence=self.settings.person_confidence_threshold,
+        )
+        with self._lock:
+            self._configs[config.camera_id] = config
+            self.processors[config.camera_id] = processor
+        return processor
+
+    def _close_tracks(self, camera_id: int, processor: FrameProcessor) -> None:
+        closed = processor.close_tracks()
+        if self.track_store is not None:
+            self.track_store.end_tracks(camera_id, closed)
+        if self.events is not None:
+            self.events.end_tracks(camera_id, closed)
+
+    def remove_camera(self, camera_id: int) -> None:
+        """Stop one camera, end its open tracks and mark it offline."""
+        with self._lock:
+            processor = self.processors.pop(camera_id)
+            self._configs.pop(camera_id)
+        processor.request_stop()
+        self.manager.remove(camera_id)  # joins the capture thread
+        processor.stop()
+        self._close_tracks(camera_id, processor)
+        self.hub.forget(camera_id)
+        self.recorder(camera_id, CameraStatus.OFFLINE)
+
+    def add_camera(self, config: CameraConfig) -> None:
+        if self.track_store is not None:
+            self.track_store.close_orphans([config.camera_id])
+        processor = self._add(config)
+        processor.start()
+        self.manager.get(config.camera_id).start()
+
+    def sync_cameras(self, configs: list[CameraConfig]) -> None:
+        """Apply the current camera list: start new, stop removed, restart changed ones."""
+        wanted = {config.camera_id: config for config in configs}
+        with self._lock:
+            current = dict(self._configs)
+        for camera_id, config in current.items():
+            if wanted.get(camera_id) != config:
+                logger.info("Camera %s removed, disabled or changed: stopping", camera_id)
+                self.remove_camera(camera_id)
+        for camera_id, config in wanted.items():
+            if current.get(camera_id) != config:
+                logger.info("Starting camera %s (%s)", camera_id, config.name)
+                self.add_camera(config)
+
+    def heartbeat(self) -> None:
+        online = [
+            camera_id
+            for camera_id, status in self.manager.statuses().items()
+            if status is CameraStatus.ONLINE
+        ]
+        self.recorder.heartbeat(online)
+
     def status(self) -> dict[str, Any]:
         cameras = {}
+        with self._lock:
+            processors = dict(self.processors)
         for worker in self.manager.workers():
-            processor = self.processors[worker.config.camera_id]
+            processor = processors.get(worker.config.camera_id)
+            if processor is None:
+                continue  # being added or removed right now
             latest = worker.buffer.latest()
             cameras[str(worker.config.camera_id)] = {
                 "status": worker.status.value,
@@ -206,7 +277,7 @@ class WorkerRuntime:
 
     def start(self) -> None:
         if self.track_store is not None:
-            self.track_store.start(list(self.processors))
+            self.track_store.close_orphans(list(self.processors))
         self.writer.start()
         if self.server is not None:
             self.server.start()
@@ -220,11 +291,7 @@ class WorkerRuntime:
         self.manager.stop_all()
         for camera_id, processor in self.processors.items():
             processor.stop()
-            closed = processor.close_tracks()
-            if self.track_store is not None:
-                self.track_store.end_tracks(camera_id, closed)
-            if self.events is not None:
-                self.events.end_tracks(camera_id, closed)
+            self._close_tracks(camera_id, processor)
         self.writer.stop()  # writes everything still queued
         if self.server is not None:
             self.server.stop()
@@ -233,8 +300,10 @@ class WorkerRuntime:
             self.recorder(camera_id, CameraStatus.OFFLINE)
 
     def log_stats(self) -> None:
+        with self._lock:
+            processors = dict(self.processors)
         for camera_id, info in self.status()["cameras"].items():
-            processor = self.processors[int(camera_id)]
+            processor = processors[int(camera_id)]
             logger.info(
                 "Camera %s: status=%s capture_fps=%.1f processing_fps=%.1f "
                 "detection=%.0fms detections=%d tracks=%d size=%s",
@@ -249,14 +318,43 @@ class WorkerRuntime:
             )
 
 
+def run_periodic(
+    runtime: WorkerRuntime,
+    settings: Settings,
+    shutdown: threading.Event,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Stats, heartbeat and camera reload until `shutdown` is set."""
+    reload_every = settings.camera_reload_interval_seconds
+    now = clock()
+    next_stats = now + STATS_INTERVAL_SECONDS
+    next_heartbeat = now  # right away: status ONLINE needs a fresh heartbeat
+    next_reload = now + reload_every
+    while not shutdown.wait(TICK_SECONDS):
+        now = clock()
+        if now >= next_heartbeat:
+            runtime.heartbeat()
+            next_heartbeat = now + settings.camera_heartbeat_seconds
+        if reload_every > 0 and now >= next_reload:
+            configs = load_camera_configs(settings)
+            if configs is not None:  # database down: keep the cameras that run
+                runtime.sync_cameras(configs)
+            next_reload = now + reload_every
+        if now >= next_stats:
+            runtime.log_stats()
+            next_stats = now + STATS_INTERVAL_SECONDS
+
+
 def main() -> None:
     settings = get_settings()
     setup_logging(settings.log_level.value)
 
-    configs = load_camera_configs(settings)
+    configs = load_camera_configs(settings) or []
     if not configs:
-        logger.error("No cameras configured: add one via POST /cameras or set CAMERA_URL")
-        return
+        if settings.camera_reload_interval_seconds == 0:
+            logger.error("No cameras configured: add one via POST /cameras or set CAMERA_URL")
+            return
+        logger.warning("No cameras yet: waiting for one to be added via POST /cameras")
 
     runtime = WorkerRuntime(settings, configs, build_ai_components(settings))
     shutdown = threading.Event()
@@ -275,8 +373,7 @@ def main() -> None:
         runtime.ai.status,
     )
     runtime.start()
-    while not shutdown.wait(STATS_INTERVAL_SECONDS):
-        runtime.log_stats()
+    run_periodic(runtime, settings, shutdown)
     runtime.stop()
     logger.info("Worker stopped")
 

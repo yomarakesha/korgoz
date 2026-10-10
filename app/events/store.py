@@ -26,6 +26,9 @@ def _track_row_id(session: Session, camera_id: int, track_id: int) -> int | None
 
 
 def _store(session: Session, record: EventRecord) -> None:
+    camera = session.get(Camera, record.camera_id)
+    if camera is None:
+        return  # deleted while the worker was still running: its last events are moot
     metadata = dict(record.metadata)
     track_row = None
     if record.track_id is not None:
@@ -35,9 +38,7 @@ def _store(session: Session, record: EventRecord) -> None:
         Event(
             event_type=record.event_type,
             camera_id=record.camera_id,
-            location_id=session.scalar(
-                select(Camera.location_id).where(Camera.id == record.camera_id)
-            ),
+            location_id=camera.location_id,
             track_id=track_row,
             person_id=record.person_id,
             timestamp=record.timestamp,

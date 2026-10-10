@@ -155,8 +155,8 @@ sudo systemctl enable --now korgoz-worker
 journalctl -u korgoz-worker -f       # каждые 10 с: fps, кадры, переподключения
 ```
 
-Добавленные через API камеры подхватываются при перезапуске воркера:
-`sudo systemctl restart korgoz-worker`.
+Добавленные, удалённые и выключенные через API камеры воркер подхватывает сам
+в течение `CAMERA_RELOAD_INTERVAL_SECONDS` (10 с), перезапуск не нужен.
 
 Проверка источника до добавления в систему (без БД):
 

@@ -48,8 +48,14 @@ camera 2 ── │ VideoStream → CameraWorker(thread) → FrameBuffer ──�
   в stderr в обход маскирующего логгера.
 
 Ограничения MVP:
-- новые камеры подхватываются только при перезапуске воркера;
-- если воркер убит через `kill -9`, статус в БД остаётся `online` (heartbeat — в планах).
+- воркер раз в `CAMERA_RELOAD_INTERVAL_SECONDS` перечитывает таблицу `cameras`: новые
+  камеры запускаются, удалённые и выключенные останавливаются (их треки закрываются),
+  камеры с изменённым источником перезапускаются; если БД недоступна, работающие камеры
+  не трогаются;
+- heartbeat: воркер раз в `CAMERA_HEARTBEAT_SECONDS` пишет `cameras.last_seen_at` для
+  камер `online`. API показывает `online` только при свежем heartbeat (не старше
+  `CAMERA_STALE_AFTER_SECONDS`), поэтому после `kill -9` воркера камера через минуту
+  становится `offline`.
 
 ## Vision pipeline (Phase 3)
 

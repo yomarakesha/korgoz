@@ -67,6 +67,9 @@ class Camera(TimestampMixin, Base):
     status: Mapped[CameraStatus] = mapped_column(
         _str_enum(CameraStatus), default=CameraStatus.UNKNOWN, server_default="unknown"
     )
+    # Heartbeat from the worker while the camera is online. A stale value means the
+    # worker died without reporting OFFLINE (see `effective_status`).
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     location: Mapped[Location | None] = relationship(back_populates="cameras")
 

@@ -50,8 +50,8 @@ curl -b cookies.txt localhost:8000/cameras
 |---|---|---|
 | GET | `/cameras` | Список камер |
 | POST | `/cameras` | `{"name", "stream_url", "location_id?", "enabled?"}` → 201 |
-| GET | `/cameras/{id}` | Камера (`stream_url` не возвращается, только `stream_url_masked`) |
-| PATCH | `/cameras/{id}` | `{"name?", "location_id?", "enabled?"}` — меняются только переданные поля; `location_id: null` убирает локацию. `enabled` воркер подхватит после перезапуска |
+| GET | `/cameras/{id}` | Камера (`stream_url` не возвращается, только `stream_url_masked`). `status: "online"` только при свежем heartbeat воркера (`last_seen_at` не старше `CAMERA_STALE_AFTER_SECONDS`), иначе `offline` |
+| PATCH | `/cameras/{id}` | `{"name?", "location_id?", "enabled?"}` — меняются только переданные поля; `location_id: null` убирает локацию. `enabled` воркер подхватит за `CAMERA_RELOAD_INTERVAL_SECONDS` (10 с) |
 | DELETE | `/cameras/{id}` | Удалить вместе с треками, сессиями и событиями |
 | GET | `/cameras/{id}/snapshot` | Последний кадр с рамками (JPEG) |
 | GET | `/cameras/{id}/stream` | Live view, MJPEG (`<img src=...>`) |

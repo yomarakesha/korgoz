@@ -1,9 +1,12 @@
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import Session
 
-from app.camera.status_store import DatabaseStatusRecorder
+from app.camera.status_store import DatabaseStatusRecorder, effective_status
 from app.camera.types import CameraStatus
+from app.database.models import Camera
 
 RTSP = "rtsp://admin:topsecret@192.168.1.10:554/stream1"
 
@@ -81,3 +84,39 @@ def test_database_outage_returns_503(api_client: Any) -> None:
     assert response.status_code == 503
     assert response.json() == {"detail": "Database unavailable"}
     assert "secret-pw" not in response.text
+
+
+def test_stale_heartbeat_shows_camera_offline(api_client: Any, sqlite_engine: Engine) -> None:
+    """A worker killed with -9 never writes OFFLINE: the stale heartbeat gives it away."""
+    camera_id = api_client.post("/cameras", json={"name": "c", "stream_url": "0"}).json()["id"]
+    recorder = DatabaseStatusRecorder(sqlite_engine)
+    recorder(camera_id, CameraStatus.ONLINE)
+    with Session(sqlite_engine) as session, session.begin():
+        camera = session.get(Camera, camera_id)
+        assert camera is not None
+        camera.last_seen_at = datetime.now(UTC) - timedelta(minutes=5)
+    body = api_client.get(f"/cameras/{camera_id}").json()
+    assert body["status"] == "offline"
+    assert body["last_seen_at"] is not None
+    assert api_client.get("/health").json()["cameras"] == 0
+
+    recorder.heartbeat([camera_id])
+    assert api_client.get(f"/cameras/{camera_id}").json()["status"] == "online"
+    assert api_client.get("/health").json()["cameras"] == 1
+
+
+def test_effective_status() -> None:
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    fresh, stale = now - timedelta(seconds=30), now - timedelta(seconds=61)
+    assert effective_status(CameraStatus.ONLINE, fresh, now, 60) is CameraStatus.ONLINE
+    assert effective_status(CameraStatus.ONLINE, stale, now, 60) is CameraStatus.OFFLINE
+    assert effective_status(CameraStatus.ONLINE, None, now, 60) is CameraStatus.OFFLINE
+    naive = fresh.replace(tzinfo=None)  # SQLite
+    assert effective_status(CameraStatus.ONLINE, naive, now, 60) is CameraStatus.ONLINE
+    assert effective_status(CameraStatus.ERROR, stale, now, 60) is CameraStatus.ERROR
+
+
+def test_heartbeat_ignores_db_errors() -> None:
+    broken = create_engine("postgresql+psycopg://nobody:x@127.0.0.1:1/none")
+    DatabaseStatusRecorder(broken).heartbeat([1])
+    DatabaseStatusRecorder(broken).heartbeat([])

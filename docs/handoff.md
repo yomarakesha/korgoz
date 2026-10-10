@@ -39,7 +39,7 @@
   (~2.5 ядра, задержка p95 ~0.15 с) — [benchmarks.md](benchmarks.md).
 
 Проверки качества:
-- `pytest` — 252 passed (с запущенным Qdrant);
+- `pytest` — 262 passed (с запущенным Qdrant);
 - `cd frontend && npm test` — 30 passed, `npm run typecheck` — чисто;
 - `pytest -m ai` — 6 passed;
 - `pytest -m integration` — 9 passed (PostgreSQL + Qdrant);
@@ -218,6 +218,12 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 - Дашборд: страница входа, «Пользователи», «Журнал аудита», смена пароля в «Настройках»;
   для роли user кнопки изменения скрыты.
 
+### После Phase 10: закрытый техдолг
+
+- Воркер перечитывает камеры раз в `CAMERA_RELOAD_INTERVAL_SECONDS` (`WorkerRuntime.sync_cameras`).
+- Heartbeat камер: `cameras.last_seen_at`, `effective_status()` в `camera/status_store.py`.
+- Кириллица в live view: встроенный Unicode-шрифт OpenCV 5 (`cv2.FontFace("sans")`).
+
 ### Phase 10 — Optimization ✅ (готово)
 
 - `scripts/benchmark_pipeline.py` собирает тот же конвейер, что и воркер (без записи в БД),
@@ -233,8 +239,6 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 
 | Проблема | Где | Идея решения |
 |---|---|---|
-| Новые и удалённые камеры подхватываются только после перезапуска воркера | `app/worker.py` | Каждые N с перечитывать `cameras` и вызывать `manager.add/remove` |
-| После `kill -9` воркера статус камеры остаётся `online` | `camera/status_store.py` | Колонка `last_heartbeat_at`; API считает камеру offline, если heartbeat старше X с |
 | Сопоставление в трекере жадное, без венгерского алгоритма | `tracking/tracker.py` | При плотной толпе заменить на `scipy.optimize.linear_sum_assignment` |
 | Номер трека начинается с 1 после перезапуска воркера | by design | Глобальный id — `tracks.id` |
 | Время детекции YOLOX-tiny скачет (21–40 мс в `benchmark_detector`) | ноутбучный CPU, троттлинг | В сквозном замере стабильно 46–98 мс в зависимости от числа камер ([benchmarks.md](benchmarks.md)) |
@@ -243,7 +247,6 @@ CameraWorker (поток) → FrameBuffer (1 последний кадр) → Fr
 | `StarletteDeprecationWarning` про `httpx2` в тестах | TestClient | Безвреден. Убрать, когда FastAPI обновит TestClient |
 | Нет индексов `tracks(started_at)` и `sessions(ended_at)` для аналитики | `database/models.py` | Добавить миграцией, когда данных станет много (замерить `EXPLAIN ANALYZE`) |
 | Разрыв трека (перекрытие дольше `TRACK_MAX_LOST_SECONDS`) = два визита в `people_count` | `analytics/service.py` | Склеивать визиты одного `person_id` или с паузой < N с |
-| Подписи в live view рисуются `cv2.putText`: кириллица в имени выводится как `???` | `pipeline/annotate.py` | Рисовать текст через Pillow с TTF-шрифтом или показывать имя в дашборде (Phase 8) |
 | Распознавание выполняется в потоке камеры (~9 мс на лицо) | `recognition/sink.py` | При многих людях одновременно вынести в отдельный поток с очередью |
 | Счётчик неудачных входов хранится в памяти процесса API | `security/login_limiter.py` | Достаточно для одного процесса. При нескольких воркерах uvicorn — хранить в БД |
 | Открытый MJPEG-поток не рвётся при выходе или блокировке пользователя | `routes/live_view.py` | Перепроверять сеанс раз в N с внутри `relay()` |

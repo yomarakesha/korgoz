@@ -53,3 +53,12 @@ def test_event_gets_the_newest_track_row_and_the_camera_location(engine: Engine)
     assert entered.metadata_ == {"track_identifier": "4"}
     assert offline.track_id is None
     assert offline.event_type is EventType.CAMERA_OFFLINE
+
+
+def test_events_of_a_deleted_camera_are_dropped(engine: Engine) -> None:
+    writer = DatabaseWriter(engine)
+    writer.start()
+    EventStore(writer)(EventRecord(EventType.CAMERA_OFFLINE, camera_id=99, timestamp=T0))
+    writer.stop()
+    with Session(engine) as session:
+        assert session.scalars(select(Event)).all() == []

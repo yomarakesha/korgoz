@@ -44,6 +44,12 @@ class LiveViewHub:
             self._latest[analysis.frame.camera_id] = analysis
             self._condition.notify_all()
 
+    def forget(self, camera_id: int) -> None:
+        """Drop a stopped camera so live view doesn't show its last frame forever."""
+        with self._condition:
+            self._latest.pop(camera_id, None)
+            self._jpeg_cache.pop(camera_id, None)
+
     def cameras(self) -> list[int]:
         with self._condition:
             return sorted(self._latest)

@@ -14,8 +14,8 @@ from functools import partial
 from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
+from app.database.models import Camera, TrackSession
 from app.database.models import Track as TrackRow
-from app.database.models import TrackSession
 from app.database.writer import DatabaseWriter
 from app.pipeline.types import FrameAnalysis
 from app.tracking.tracker import TrackedObject
@@ -81,7 +81,7 @@ class TrackStore:
     # --- lifecycle -------------------------------------------------------------
 
     def start(self, camera_ids: list[int]) -> None:
-        self._close_orphans(camera_ids)
+        self.close_orphans(camera_ids)
         if self._owns_writer:
             self._writer.start()
 
@@ -93,6 +93,8 @@ class TrackStore:
     # --- writer thread -----------------------------------------------------------
 
     def _start(self, session: Session, camera_id: int, track: TrackedObject) -> None:
+        if session.get(Camera, camera_id) is None:
+            return  # camera deleted; the worker stops it on the next reload
         row = TrackRow(
             camera_id=camera_id,
             track_identifier=str(track.track_id),
@@ -127,7 +129,7 @@ class TrackStore:
         for row_id, seen in pending.items():
             session.execute(update(TrackRow).where(TrackRow.id == row_id).values(last_seen_at=seen))
 
-    def _close_orphans(self, camera_ids: list[int]) -> None:
+    def close_orphans(self, camera_ids: list[int]) -> None:
         """Tracks left open by a crashed worker end at their last-seen time."""
         if not camera_ids:
             return

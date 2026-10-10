@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.auth import AuditDep
-from app.api.dependencies import DbSession
+from app.api.dependencies import DbSession, SettingsDep
 from app.api.schemas.camera import CameraCreate, CameraRead, CameraUpdate
 from app.database.models import Camera, Location
 from app.security.types import AuditAction
@@ -18,13 +18,15 @@ def _get_or_404(db: DbSession, camera_id: int) -> Camera:
 
 
 @router.get("", response_model=list[CameraRead])
-def list_cameras(db: DbSession) -> list[CameraRead]:
+def list_cameras(db: DbSession, settings: SettingsDep) -> list[CameraRead]:
     cameras = db.scalars(select(Camera).order_by(Camera.id))
-    return [CameraRead.from_model(c) for c in cameras]
+    return [CameraRead.from_model(c, settings.camera_stale_after_seconds) for c in cameras]
 
 
 @router.post("", response_model=CameraRead, status_code=status.HTTP_201_CREATED)
-def create_camera(payload: CameraCreate, db: DbSession, record: AuditDep) -> CameraRead:
+def create_camera(
+    payload: CameraCreate, db: DbSession, record: AuditDep, settings: SettingsDep
+) -> CameraRead:
     if payload.location_id is not None and db.get(Location, payload.location_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Location does not exist")
     camera = Camera(**payload.model_dump())
@@ -34,21 +36,25 @@ def create_camera(payload: CameraCreate, db: DbSession, record: AuditDep) -> Cam
     record(AuditAction.CAMERA_CREATED, "camera", camera.id, name=camera.name)
     db.commit()
     db.refresh(camera)
-    return CameraRead.from_model(camera)
+    return CameraRead.from_model(camera, settings.camera_stale_after_seconds)
 
 
 @router.get("/{camera_id}", response_model=CameraRead)
-def get_camera(camera_id: int, db: DbSession) -> CameraRead:
-    return CameraRead.from_model(_get_or_404(db, camera_id))
+def get_camera(camera_id: int, db: DbSession, settings: SettingsDep) -> CameraRead:
+    return CameraRead.from_model(_get_or_404(db, camera_id), settings.camera_stale_after_seconds)
 
 
 @router.patch("/{camera_id}", response_model=CameraRead)
 def update_camera(
-    camera_id: int, payload: CameraUpdate, db: DbSession, record: AuditDep
+    camera_id: int,
+    payload: CameraUpdate,
+    db: DbSession,
+    record: AuditDep,
+    settings: SettingsDep,
 ) -> CameraRead:
     """Rename, move to another location (`location_id: null` = none) or enable/disable.
 
-    The worker reads cameras at start: restart it for `enabled` to take effect.
+    The worker picks the change up within CAMERA_RELOAD_INTERVAL_SECONDS.
     """
     camera = _get_or_404(db, camera_id)
     changes = payload.model_dump(exclude_unset=True)
@@ -61,7 +67,7 @@ def update_camera(
     record(AuditAction.CAMERA_UPDATED, "camera", camera.id, **changes)
     db.commit()
     db.refresh(camera)
-    return CameraRead.from_model(camera)
+    return CameraRead.from_model(camera, settings.camera_stale_after_seconds)
 
 
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)

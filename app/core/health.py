@@ -6,6 +6,7 @@ show up in /health, not crash the API.
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 import httpx
@@ -56,11 +57,14 @@ def check_qdrant(settings: Settings) -> ComponentStatus:
     return ComponentStatus.OK if store.health_check() else ComponentStatus.UNAVAILABLE
 
 
-def count_online_cameras(engine: Engine) -> int:
-    """Cameras reported ONLINE by the worker process (via the database)."""
+def count_online_cameras(engine: Engine, stale_after_seconds: float) -> int:
+    """Cameras reported ONLINE by the worker process with a fresh heartbeat."""
+    fresh_since = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
     try:
         with Session(engine) as session:
-            query = select(func.count(Camera.id)).where(Camera.status == CameraStatus.ONLINE)
+            query = select(func.count(Camera.id)).where(
+                Camera.status == CameraStatus.ONLINE, Camera.last_seen_at >= fresh_since
+            )
             return session.scalar(query) or 0
     except Exception as exc:
         logger.warning("Camera status query failed: %s", type(exc).__name__)
@@ -88,7 +92,11 @@ def build_report(engine: Engine, settings: Settings) -> HealthReport:
     database = check_database(engine)
     qdrant = check_qdrant(settings)
     ai = check_ai(settings)
-    cameras = count_online_cameras(engine) if database is ComponentStatus.OK else 0
+    cameras = (
+        count_online_cameras(engine, settings.camera_stale_after_seconds)
+        if database is ComponentStatus.OK
+        else 0
+    )
 
     # Without the database the API can't serve anything useful. Qdrant matters
     # only in recognition mode; a missing worker/AI degrades but doesn't fail the API.

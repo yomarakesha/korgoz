@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     camera_reconnect_initial_delay_seconds: float = Field(default=1.0, gt=0)
     camera_reconnect_max_delay_seconds: float = Field(default=30.0, gt=0)
     camera_read_failure_threshold: int = Field(default=10, ge=1)
+    # The worker re-reads the cameras table this often (0 = only at start).
+    camera_reload_interval_seconds: float = Field(default=10.0, ge=0)
+    # Online cameras get `last_seen_at` refreshed this often; the API shows a camera
+    # whose heartbeat is older than CAMERA_STALE_AFTER_SECONDS as offline.
+    camera_heartbeat_seconds: float = Field(default=10.0, gt=0)
+    camera_stale_after_seconds: float = Field(default=60.0, gt=0)
 
     # --- Vision pipeline -------------------------------------------------
     # Run detection on every N-th frame; tracking fills the gaps.

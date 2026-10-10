@@ -36,6 +36,9 @@ def test_hub_encodes_once_per_frame() -> None:
     assert first is not None and again is first  # served from cache
     assert hub.wait_jpeg(1, after_index=0, timeout=0.05) is None  # nothing newer
     assert hub.wait_jpeg(99, after_index=-1, timeout=0.05) is None  # unknown camera
+    hub.forget(1)  # camera removed from the worker
+    assert hub.cameras() == []
+    assert hub.wait_jpeg(1, after_index=-1, timeout=0.05) is None
 
 
 @pytest.fixture
@@ -82,3 +85,13 @@ def test_annotate_uses_recognition_labels() -> None:
     default = annotate(item)
     named = annotate(item, {5: "Alice 0.91"})
     assert not np.array_equal(default, named)  # different label text drawn
+
+
+def test_annotate_renders_cyrillic_names() -> None:
+    frame = make_frame(1)
+    frame = Frame(frame.camera_id, frame.index, frame.timestamp, np.zeros((200, 300, 3), np.uint8))
+    tracked = TrackedObject(5, BoundingBox(10, 80, 150, 190), 0.9, frame.timestamp, frame.timestamp)
+    item = FrameAnalysis(frame=frame, tracks=[tracked])
+    cyrillic = annotate(item, {5: "Алия 0.91"})
+    unknown_glyphs = annotate(item, {5: "???? 0.91"})  # what a Hershey font draws
+    assert not np.array_equal(cyrillic, unknown_glyphs)
